@@ -38,7 +38,7 @@ class LLMService:
                     {"role": "system", "content": self.system_prompt},
                     {
                         "role": "user",
-                        "content": f"Please summarize the following conversation:\n\n```\n{conversation_text}\n```",
+                        "content": f"Пожалуйста, перескажите диалог:\n\n```\n{conversation_text}\n```",
                     },
                 ],
             )
