@@ -8,6 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+.vscode
+.idea
 
 uv.lock
 .python-version
+data/
+*.db

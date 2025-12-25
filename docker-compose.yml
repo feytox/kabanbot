@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    container_name: kabanbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

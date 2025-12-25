@@ -1,5 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "kabanbot"
 version = "0.0.1"
+description = "Kabanbot"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "aiogram",
+    "pydantic-settings",
+    "litellm",
+    "aiosqlite",
+    "python-dotenv",
+]
