@@ -17,5 +17,8 @@ class Settings(BaseSettings):
     # Cache Settings
     CACHE_SIZE: int = 1000
 
+    # Whitelist settings
+    ALLOWED_GROUPS: list[int] = []
+
 
 settings = Settings()

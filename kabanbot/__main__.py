@@ -8,6 +8,7 @@ from kabanbot.config import settings
 from kabanbot.services.cache import MessageCache
 from kabanbot.services.llm import LLMService
 from kabanbot.handlers.groups import group_router
+from kabanbot.middlewares.whitelist import WhitelistMiddleware
 from kabanbot.middlewares.cache import CacheMiddleware
 
 
@@ -31,6 +32,8 @@ async def main():
     dp = Dispatcher()
 
     # Register Middleware
+    # Register Whitelist first to block unauthorized groups early
+    group_router.message.outer_middleware(WhitelistMiddleware())
     # We pass cache to middleware
     group_router.message.outer_middleware(CacheMiddleware(cache))
 
