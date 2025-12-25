@@ -19,7 +19,7 @@ class WhitelistMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         if event.chat.id not in settings.ALLOWED_GROUPS:
-            await event.reply("⛔ This group is not authorized to use this bot.")
+            await event.reply(f"⛔ This group ({event.chat.id}) is not authorized to use this bot.")
             return
 
         return await handler(event, data)
