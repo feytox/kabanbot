@@ -3,6 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, BotCommandScopeAllGroupChats
 
 from kabanbot.config import settings
 from kabanbot.services.cache import MessageCache
@@ -10,6 +11,15 @@ from kabanbot.services.llm import LLMService
 from kabanbot.handlers.groups import group_router
 from kabanbot.middlewares.whitelist import WhitelistMiddleware
 from kabanbot.middlewares.cache import CacheMiddleware
+
+
+async def setup_commands(bot: Bot):
+    commands = [
+        BotCommand(
+            command="summary", description="Получить краткий пересказ сообщений"
+        ),
+    ]
+    await bot.set_my_commands(commands=commands, scope=BotCommandScopeAllGroupChats())
 
 
 async def main():
@@ -44,6 +54,9 @@ async def main():
     # We inject services into workflow_data so handlers can access them
     dp["cache"] = cache
     dp["llm"] = llm
+
+    # Setup commands
+    await setup_commands(bot)
 
     logging.info("Starting bot...")
     await dp.start_polling(bot)
