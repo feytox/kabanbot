@@ -32,7 +32,7 @@ async def main():
 
     # Register Middleware
     # We pass cache to middleware
-    group_router.message.middleware(CacheMiddleware(cache))
+    group_router.message.outer_middleware(CacheMiddleware(cache))
 
     # Register Router
     dp.include_router(group_router)
