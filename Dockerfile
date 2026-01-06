@@ -10,13 +10,14 @@ ENV UV_COMPILE_BYTECODE=1
 WORKDIR /app
 
 # Copy dependency files first to utilize cache
-COPY pyproject.toml uv.lock prompts ./
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies without installing the project itself
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy the application code
 COPY kabanbot/ kabanbot/
+COPY prompts/ prompts/
 
 # Install the project
 RUN uv sync --frozen --no-dev
