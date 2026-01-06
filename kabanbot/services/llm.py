@@ -45,7 +45,7 @@ class LLMService:
                     {"role": "system", "content": self.system_prompt},
                     {
                         "role": "user",
-                        "content": conversation_text,
+                        "content": f"Messages:\n```\n{conversation_text}\n```",
                     },
                 ],
             )
