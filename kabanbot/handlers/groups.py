@@ -15,11 +15,6 @@ async def cmd_summary(message: Message, cache: MessageCache, llm: LLMService):
     """
     start_message = message.reply_to_message
 
-    # Get messages from cache since the replied message (exclusive or inclusive?
-    # Usually "since" means after. If user wants to include the replied one, logic might need adjustment.
-    # Requirement: "bot takes all messages newer than this old message".
-    # So "after" is correct.
-
     history = await cache.get_messages_since(message.chat.id, start_message.message_id)
 
     if not history:

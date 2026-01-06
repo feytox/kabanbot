@@ -5,6 +5,33 @@ from kabanbot.services.cache import MessageCache
 from kabanbot.consts import BOT_COMMANDS
 
 
+def _get_content_placeholder(message: Message) -> str | None:
+    if message.photo:
+        return "[Photo]"
+    if message.video:
+        return "[Video]"
+    if message.voice:
+        return "[Voice]"
+    if message.audio:
+        return "[Audio]"
+    if message.document:
+        return "[Document]"
+    if message.sticker:
+        emoji = message.sticker.emoji or ""
+        return f"[Sticker] {emoji}".strip()
+    if message.animation:
+        return "[GIF]"
+    if message.video_note:
+        return "[Video Note]"
+    if message.poll:
+        return f"[Poll] {message.poll.question}"
+    if message.location:
+        return "[Location]"
+    if message.contact:
+        return "[Contact]"
+    return None
+
+
 class CacheMiddleware(BaseMiddleware):
     def __init__(self, cache: MessageCache):
         super().__init__()
@@ -24,7 +51,13 @@ class CacheMiddleware(BaseMiddleware):
                     me = await bot.get_me()
                     self.bot_username = me.username
 
-            text = event.text or event.caption or ""
+            caption_or_text = event.text or event.caption or ""
+            placeholder = _get_content_placeholder(event)
+
+            if placeholder:
+                text = f"{placeholder} {caption_or_text}".strip()
+            else:
+                text = caption_or_text
 
             should_save = True
             if text.startswith("/"):
