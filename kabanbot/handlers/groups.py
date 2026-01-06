@@ -1,12 +1,46 @@
-from aiogram import Router, F
+from html import escape
+
+from aiogram import Router, F, Bot
 from aiogram.types import Message
 from aiogram.filters import Command
+
 from kabanbot.services.cache import MessageCache
 from kabanbot.services.llm import LLMService
 import telegramify_markdown
 
 group_router = Router()
 group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
+
+
+@group_router.message(F.text.contains("@all"))
+async def mention_all(message: Message, bot: Bot, cache: MessageCache):
+    """Pings all non-bot users in the group when a message contains @all."""
+    users: dict[int, str] = {}
+
+    cached_users = await cache.get_unique_users(message.chat.id)
+    for user in cached_users:
+        users[user["user_id"]] = user["username"]
+
+    try:
+        async for member in bot.get_chat_administrators(message.chat.id):
+            user = member.user
+            if not user.is_bot and user.id not in users:
+                users[user.id] = user.full_name
+    except Exception:
+        pass
+
+    if message.from_user:
+        users.pop(message.from_user.id, None)
+
+    if not users:
+        await message.reply("Не удалось найти пользователей для упоминания.")
+        return
+
+    mentions = [
+        f'<a href="tg://user?id={uid}">@{escape(name)}</a>'
+        for uid, name in users.items()
+    ]
+    await message.reply(" ".join(mentions), parse_mode="HTML")
 
 
 @group_router.message(Command("summary"), F.reply_to_message)

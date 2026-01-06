@@ -166,3 +166,17 @@ class MessageCache:
                 if row:
                     return {"text": row[0], "username": row[1]}
                 return None
+
+    async def get_unique_users(self, chat_id: int) -> List[Dict[str, Any]]:
+        """Retrieves all unique users who have sent messages in the chat."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """
+                SELECT DISTINCT user_id, username 
+                FROM messages 
+                WHERE chat_id = ? AND user_id != 0
+                """,
+                (chat_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [{"user_id": r[0], "username": r[1]} for r in rows]
