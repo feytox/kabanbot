@@ -24,10 +24,17 @@ class LLMService:
         if not messages:
             return "No messages to summarize."
 
-        # Format the conversation history
-        conversation_text = "\n".join(
-            f"{msg['username']}: {msg['text']}" for msg in messages
-        )
+        def format_message(msg: Dict[str, Any]) -> str:
+            username = msg["username"]
+            text = msg["text"]
+            reply_to_text = msg.get("reply_to_text")
+            reply_to_username = msg.get("reply_to_username")
+
+            if reply_to_text and reply_to_username:
+                return f'{username} (replying to {reply_to_username}: "{reply_to_text}"): {text}'
+            return f"{username}: {text}"
+
+        conversation_text = "\n".join(format_message(msg) for msg in messages)
 
         try:
             response = await acompletion(

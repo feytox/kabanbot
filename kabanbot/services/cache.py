@@ -27,12 +27,30 @@ class MessageCache:
                     user_id INTEGER,
                     username TEXT,
                     text TEXT,
-                    timestamp REAL
+                    timestamp REAL,
+                    reply_to_text TEXT,
+                    reply_to_username TEXT
                 )
             """)
             await db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_timestamp ON messages (chat_id, timestamp)"
             )
+
+            existing_columns = set()
+            async with db.execute("PRAGMA table_info(messages)") as cursor:
+                async for row in cursor:
+                    existing_columns.add(row[1])
+
+            if "reply_to_text" not in existing_columns:
+                await db.execute("ALTER TABLE messages ADD COLUMN reply_to_text TEXT")
+                logger.info("Migrated database: added reply_to_text column")
+
+            if "reply_to_username" not in existing_columns:
+                await db.execute(
+                    "ALTER TABLE messages ADD COLUMN reply_to_username TEXT"
+                )
+                logger.info("Migrated database: added reply_to_username column")
+
             await db.commit()
 
     async def add_message(
@@ -43,20 +61,30 @@ class MessageCache:
         username: str,
         text: str,
         timestamp: float,
+        reply_to_text: str | None = None,
+        reply_to_username: str | None = None,
     ):
         """Adds a message to the cache and prunes old ones."""
-        async with self._lock:  # Ensure sequential writes/prunes per instance
+        async with self._lock:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
                     """
-                    INSERT INTO messages (chat_id, message_id, user_id, username, text, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO messages (chat_id, message_id, user_id, username, text, timestamp, reply_to_text, reply_to_username)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                    (chat_id, message_id, user_id, username, text, timestamp),
+                    (
+                        chat_id,
+                        message_id,
+                        user_id,
+                        username,
+                        text,
+                        timestamp,
+                        reply_to_text,
+                        reply_to_username,
+                    ),
                 )
                 await db.commit()
 
-                # Prune
                 await self._prune(db, chat_id)
 
     async def _prune(self, db: aiosqlite.Connection, chat_id: int):
@@ -102,10 +130,9 @@ class MessageCache:
                     return []  # Reference message not found in cache
                 ref_timestamp = row[0]
 
-            # Get messages strictly after that timestamp
             async with db.execute(
                 """
-                SELECT username, text, timestamp, message_id 
+                SELECT username, text, timestamp, message_id, reply_to_text, reply_to_username
                 FROM messages 
                 WHERE chat_id = ? AND timestamp >= ?
                 ORDER BY timestamp ASC
@@ -120,6 +147,22 @@ class MessageCache:
                         "text": r[1],
                         "timestamp": r[2],
                         "message_id": r[3],
+                        "reply_to_text": r[4],
+                        "reply_to_username": r[5],
                     }
                     for r in rows
                 ]
+
+    async def get_message_details(
+        self, chat_id: int, message_id: int
+    ) -> Dict[str, Any] | None:
+        """Retrieves text and username for a specific message."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT text, username FROM messages WHERE chat_id = ? AND message_id = ?",
+                (chat_id, message_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return {"text": row[0], "username": row[1]}
+                return None
