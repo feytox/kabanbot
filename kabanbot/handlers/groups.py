@@ -3,6 +3,7 @@ from aiogram.types import Message
 from aiogram.filters import Command
 from kabanbot.services.cache import MessageCache
 from kabanbot.services.llm import LLMService
+import telegramify_markdown
 
 group_router = Router()
 group_router.message.filter(F.chat.type.in_({"group", "supergroup"}))
@@ -27,4 +28,6 @@ async def cmd_summary(message: Message, cache: MessageCache, llm: LLMService):
 
     summary = await llm.summarize(history)
 
-    await processing_msg.edit_text(summary)
+    formatted_summary = telegramify_markdown.markdownify(summary)
+
+    await processing_msg.edit_text(formatted_summary, parse_mode="MarkdownV2")

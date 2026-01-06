@@ -13,4 +13,5 @@ dependencies = [
     "litellm",
     "aiosqlite",
     "python-dotenv",
+    "telegramify-markdown>=0.5.4",
 ]
