@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeAllGroupChats
+from aiogram.types import BotCommandScopeAllGroupChats
 
 from kabanbot.config import settings
 from kabanbot.services.cache import MessageCache
@@ -13,13 +13,13 @@ from kabanbot.middlewares.whitelist import WhitelistMiddleware
 from kabanbot.middlewares.cache import CacheMiddleware
 
 
+from kabanbot.consts import BOT_COMMANDS
+
+
 async def setup_commands(bot: Bot):
-    commands = [
-        BotCommand(
-            command="summary", description="Получить краткий пересказ сообщений"
-        ),
-    ]
-    await bot.set_my_commands(commands=commands, scope=BotCommandScopeAllGroupChats())
+    await bot.set_my_commands(
+        commands=BOT_COMMANDS, scope=BotCommandScopeAllGroupChats()
+    )
 
 
 async def main():

@@ -2,12 +2,14 @@ from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 from kabanbot.services.cache import MessageCache
+from kabanbot.consts import BOT_COMMANDS
 
 
 class CacheMiddleware(BaseMiddleware):
     def __init__(self, cache: MessageCache):
         super().__init__()
         self.cache = cache
+        self.bot_username = None
 
     async def __call__(
         self,
@@ -16,14 +18,35 @@ class CacheMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         if isinstance(event, Message):
-            # Only cache text messages for now, or captions?
-            # Requirement says "reads every new incoming message".
-            # Storing text content is primary for LLM.
+            if self.bot_username is None:
+                bot = data.get("bot")
+                if bot:
+                    me = await bot.get_me()
+                    self.bot_username = me.username
+
             text = event.text or event.caption or ""
 
-            # We only care about group messages (filtering happens in router, but middleware sees all if attached globally)
-            # But let's assume we attach this to the group router.
-            if text:
+            should_save = True
+            if text.startswith("/"):
+                command_parts = text.split()[0].split("@")
+                command = command_parts[0][1:]
+                target_bot = command_parts[1] if len(command_parts) > 1 else None
+
+                is_my_command = False
+                if target_bot:
+                    if (
+                        self.bot_username
+                        and target_bot.lower() == self.bot_username.lower()
+                    ):
+                        is_my_command = True
+                else:
+                    if command in [c.command for c in BOT_COMMANDS]:
+                        is_my_command = True
+
+                if is_my_command:
+                    should_save = False
+
+            if text and should_save:
                 user_id = event.from_user.id if event.from_user else 0
                 username = (
                     event.from_user.username or event.from_user.full_name or "Unknown"
