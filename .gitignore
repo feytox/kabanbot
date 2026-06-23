@@ -1,18 +1,10 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+# Binaries
+kabanbot
 
-# Virtual environments
-.venv
+old-bot
+
+# Local environment variables containing secrets
 .env
-.vscode
-.idea
 
-uv.lock
-.python-version
-data/
-*.db
+# Test binaries
+*.test

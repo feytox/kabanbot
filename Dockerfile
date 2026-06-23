@@ -1,29 +1,28 @@
-FROM python:3.13-slim
-
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV UV_COMPILE_BYTECODE=1
+# Build stage
+FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /app
 
-# Copy dependency files first to utilize cache
-COPY pyproject.toml uv.lock ./
+# Copy dependency files first to leverage Docker cache
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Install dependencies without installing the project itself
-RUN uv sync --frozen --no-install-project --no-dev
+# Copy application source code
+COPY . .
 
-# Copy the application code
-COPY kabanbot/ kabanbot/
-COPY prompts/ prompts/
+# Build a statically linked binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o kabanbot main.go
 
-# Install the project
-RUN uv sync --frozen --no-dev
+# Final slim execution stage
+FROM alpine:latest
 
-# Add virtual environment to PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# Install ca-certificates for secure HTTPS requests to Telegram and LLM APIs
+RUN apk --no-cache add ca-certificates
 
-# Run the application
-CMD ["python", "-m", "kabanbot"]
+WORKDIR /app
+
+# Copy static binary from the builder stage
+COPY --from=builder /app/kabanbot /app/kabanbot
+
+# Execute the application
+ENTRYPOINT ["/app/kabanbot"]
