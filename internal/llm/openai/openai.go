@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -21,6 +22,8 @@ type Config struct {
 	BaseURL string
 	// Headers are sent with every request, e.g. OpenRouter attribution headers.
 	Headers map[string]string
+	// HTTPClient overrides the default HTTP client.
+	HTTPClient *http.Client
 }
 
 // Client is an llm.Client backed by the Chat Completions API.
@@ -36,25 +39,25 @@ func New(cfg Config) *Client {
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
+	if cfg.HTTPClient != nil {
+		opts = append(opts, option.WithHTTPClient(cfg.HTTPClient))
+	}
 	for k, v := range cfg.Headers {
 		opts = append(opts, option.WithHeader(k, v))
 	}
 	return &Client{api: openai.NewClient(opts...)}
 }
 
-// NewOpenRouter creates a Client for OpenRouter.
-func NewOpenRouter(apiKey, baseURL string) *Client {
-	if baseURL == "" {
-		baseURL = OpenRouterBaseURL
+// NewOpenRouter creates a Client for OpenRouter. It fills in the OpenRouter base URL and attribution headers.
+func NewOpenRouter(cfg Config) *Client {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = OpenRouterBaseURL
 	}
-	return New(Config{
-		APIKey:  apiKey,
-		BaseURL: baseURL,
-		Headers: map[string]string{
-			"HTTP-Referer": "https://github.com/feytox/kabanbot",
-			"X-Title":      "kabanbot",
-		},
-	})
+	cfg.Headers = map[string]string{
+		"HTTP-Referer": "https://github.com/feytox/kabanbot",
+		"X-Title":      "kabanbot",
+	}
+	return New(cfg)
 }
 
 // Complete implements llm.Client.

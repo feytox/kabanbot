@@ -9,3 +9,7 @@ services:
       DB_PATH: /app/data/messages.db
     volumes:
       - ./data:/app/data
+    # The Mini App and API. Put an HTTPS reverse proxy (Caddy, nginx, a tunnel) in front
+    # and set WEBAPP_URL to its public address.
+    ports:
+      - "127.0.0.1:8080:8080"

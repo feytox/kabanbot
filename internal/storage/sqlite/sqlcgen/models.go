@@ -18,6 +18,7 @@ type Chat struct {
 	SettingsJson   string
 	UpdatedBy      sql.NullInt64
 	UpdatedAt      int64
+	Member         bool
 }
 
 type Message struct {

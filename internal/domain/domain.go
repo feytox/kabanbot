@@ -10,6 +10,10 @@ import (
 // ErrNotFound is returned by stores when a requested entity does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrNoMasterKey is returned when provider API keys cannot be encrypted or decrypted
+// because MASTER_KEY is not configured.
+var ErrNoMasterKey = errors.New("MASTER_KEY is not configured")
+
 // Message is a cached chat message.
 type Message struct {
 	ChatID    int64
@@ -61,7 +65,18 @@ type Provider struct {
 	Name    string
 	BaseURL string
 	APIKey  Secret
+	// KeyHint is the tail of the API key, safe to show to its owner.
+	KeyHint string
 	Shared  bool
+}
+
+// KeyHint returns the part of an API key that may be shown back to its owner.
+func KeyHint(key string) string {
+	r := []rune(key)
+	if len(r) <= 8 {
+		return ""
+	}
+	return string(r[len(r)-4:])
 }
 
 // Model is a concrete model offered by a provider.
@@ -77,6 +92,44 @@ type Model struct {
 type ModelParams struct {
 	Temperature *float64 `json:"temperature,omitempty"`
 	MaxTokens   int64    `json:"max_tokens,omitempty"`
+}
+
+// Chat is a group the bot has been added to, with its settings.
+type Chat struct {
+	ID       int64
+	Title    string
+	Settings ChatSettings
+	// SummaryModelID is the model bound for summaries; nil means the default model.
+	SummaryModelID *int64
+}
+
+// ChatSettings are the per-chat switches editable by chat admins.
+type ChatSettings struct {
+	// Enabled turns the bot's features on or off in the chat as a whole.
+	Enabled bool
+	Features
+}
+
+// Features toggles individual bot features.
+type Features struct {
+	Summary    bool
+	MentionAll bool
+}
+
+// DefaultChatSettings are the settings of a chat nobody has configured yet.
+func DefaultChatSettings() ChatSettings {
+	return ChatSettings{Enabled: true, Summary: true, MentionAll: true}
+}
+
+// ModelOption is a model a user may bind to a chat, as shown in pickers.
+// It deliberately carries no provider URL or key.
+type ModelOption struct {
+	Model
+	ProviderName string
+	ProviderKind ProviderKind
+	OwnerID      int64
+	OwnerName    string
+	Shared       bool
 }
 
 // Secret is a sensitive string that never shows up in logs or formatted output.

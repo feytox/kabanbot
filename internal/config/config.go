@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"slices"
 
 	"github.com/caarlos0/env/v11"
@@ -27,8 +28,10 @@ type Config struct {
 	// MasterKey is a base64-encoded 32-byte key used to encrypt provider API keys at rest.
 	MasterKey string `env:"MASTER_KEY"`
 
-	HTTPAddr string     `env:"HTTP_ADDR" envDefault:":8080"`
-	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
+	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
+	// WebAppURL is the public HTTPS URL where HTTPAddr is reachable. Empty disables the Mini App.
+	WebAppURL string     `env:"WEBAPP_URL"`
+	LogLevel  slog.Level `env:"LOG_LEVEL" envDefault:"info"`
 
 	LLM DefaultLLM `envPrefix:"LLM_"`
 }
@@ -81,6 +84,11 @@ func (c Config) validate() error {
 	}
 	if _, err := c.MasterKeyBytes(); err != nil {
 		errs = append(errs, err)
+	}
+	if c.WebAppURL != "" {
+		if u, err := url.Parse(c.WebAppURL); err != nil || u.Scheme != "https" || u.Host == "" {
+			errs = append(errs, errors.New("WEBAPP_URL must be an https:// URL"))
+		}
 	}
 	return errors.Join(errs...)
 }

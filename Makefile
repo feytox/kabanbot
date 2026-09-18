@@ -1,7 +1,10 @@
-.PHONY: build run test lint fmt generate tidy docker
+.PHONY: build web run test lint fmt generate tidy docker
 
-build:
+build: web
 	go build -trimpath -o bin/kabanbot ./cmd/kabanbot
+
+web:
+	cd web/miniapp && npm ci && npm run build
 
 run:
 	go run ./cmd/kabanbot

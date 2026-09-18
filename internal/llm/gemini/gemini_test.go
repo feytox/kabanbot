@@ -30,7 +30,7 @@ func TestComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(t.Context(), "key", srv.URL)
+	c, err := New(t.Context(), "key", srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

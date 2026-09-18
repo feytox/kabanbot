@@ -57,7 +57,15 @@ func (b *Bot) replyPlain(ctx context.Context, msg *telego.Message, text string) 
 // notify sends a short service message that only the author of msg can see.
 // It falls back to a regular reply when the author cannot receive ephemeral messages.
 func (b *Bot) notify(ctx context.Context, msg *telego.Message, text string) {
+	b.notifyWithMarkup(ctx, msg, text, nil)
+}
+
+// notifyWithMarkup is notify with an inline keyboard.
+func (b *Bot) notifyWithMarkup(ctx context.Context, msg *telego.Message, text string, markup *telego.InlineKeyboardMarkup) {
 	params := tu.Message(msg.Chat.ChatID(), text).WithMessageThreadID(msg.MessageThreadID)
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
 	if u := msg.From; u != nil && u.ID != anonymousAdminID && msg.SenderChat == nil {
 		params.EphemeralMessageParameters = &telego.EphemeralMessageParameters{ReceiverUserID: int(u.ID)}
 		_, err := b.api.SendMessage(ctx, params)

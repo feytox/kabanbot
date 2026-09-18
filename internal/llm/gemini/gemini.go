@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"google.golang.org/genai"
 
@@ -18,12 +19,14 @@ type Client struct {
 
 var _ llm.Client = (*Client)(nil)
 
-// New creates a Client. baseURL may be empty to use the default endpoint.
-func New(ctx context.Context, apiKey, baseURL string) (*Client, error) {
+// New creates a Client. baseURL may be empty to use the default endpoint,
+// and httpClient may be nil to use the default HTTP client.
+func New(ctx context.Context, apiKey, baseURL string, httpClient *http.Client) (*Client, error) {
 	api, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:      apiKey,
 		Backend:     genai.BackendGeminiAPI,
 		HTTPOptions: genai.HTTPOptions{BaseURL: baseURL},
+		HTTPClient:  httpClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gemini: new client: %w", err)

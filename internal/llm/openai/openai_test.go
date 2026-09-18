@@ -29,7 +29,7 @@ func TestComplete(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewOpenRouter("sk-test", srv.URL)
+	c := NewOpenRouter(Config{APIKey: "sk-test", BaseURL: srv.URL})
 	temp := 0.5
 	resp, err := c.Complete(t.Context(), llm.Request{
 		Model:       "vendor/model",
