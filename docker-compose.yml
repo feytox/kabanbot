@@ -3,7 +3,11 @@ services:
     build: .
     container_name: kabanbot
     restart: unless-stopped
+    # Run as the owner of ./data so the bind-mounted database is writable.
+    user: "${UID:-1000}:${GID:-1000}"
     env_file:
       - .env
+    environment:
+      DB_PATH: /app/data/messages.db
     volumes:
       - ./data:/app/data
