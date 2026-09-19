@@ -9,8 +9,6 @@ import (
 	"slices"
 
 	"github.com/caarlos0/env/v11"
-
-	"github.com/feytox/kabanbot/internal/domain"
 )
 
 // Config is the full application configuration.
@@ -25,21 +23,12 @@ type Config struct {
 	CacheSize int    `env:"CACHE_SIZE" envDefault:"1000"`
 
 	// MasterKey is a base64-encoded 32-byte key used to encrypt provider API keys at rest.
-	MasterKey string `env:"MASTER_KEY"`
+	// Every model is a user's provider, so the bot cannot work without it.
+	MasterKey string `env:"MASTER_KEY,required,notEmpty"`
 
 	// HTTPAddr serves /healthz.
 	HTTPAddr string     `env:"HTTP_ADDR" envDefault:":8080"`
 	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
-
-	LLM DefaultLLM `envPrefix:"LLM_"`
-}
-
-// DefaultLLM is the model used by chats that have no model bound to them.
-type DefaultLLM struct {
-	Provider domain.ProviderKind `env:"PROVIDER" envDefault:"openai"`
-	BaseURL  string              `env:"BASE_URL"`
-	APIKey   string              `env:"API_KEY"`
-	Model    string              `env:"MODEL"`
 }
 
 // Load reads and validates the configuration.
@@ -54,11 +43,8 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// MasterKeyBytes decodes MasterKey. It returns nil if no key is configured.
+// MasterKeyBytes decodes MasterKey.
 func (c Config) MasterKeyBytes() ([]byte, error) {
-	if c.MasterKey == "" {
-		return nil, nil
-	}
 	key, err := base64.StdEncoding.DecodeString(c.MasterKey)
 	if err != nil {
 		return nil, fmt.Errorf("MASTER_KEY: %w", err)
@@ -73,12 +59,6 @@ func (c Config) validate() error {
 	var errs []error
 	if c.CacheSize <= 0 {
 		errs = append(errs, errors.New("CACHE_SIZE must be positive"))
-	}
-	if !c.LLM.Provider.Valid() {
-		errs = append(errs, fmt.Errorf("LLM_PROVIDER: unknown provider %q", c.LLM.Provider))
-	}
-	if c.LLM.Model == "" {
-		errs = append(errs, errors.New("LLM_MODEL is required"))
 	}
 	if _, err := c.MasterKeyBytes(); err != nil {
 		errs = append(errs, err)

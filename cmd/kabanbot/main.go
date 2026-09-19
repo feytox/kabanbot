@@ -19,8 +19,6 @@ import (
 	"github.com/feytox/kabanbot/internal/app/settings"
 	"github.com/feytox/kabanbot/internal/app/summary"
 	"github.com/feytox/kabanbot/internal/config"
-	"github.com/feytox/kabanbot/internal/domain"
-	"github.com/feytox/kabanbot/internal/llm"
 	"github.com/feytox/kabanbot/internal/llm/registry"
 	"github.com/feytox/kabanbot/internal/secrets"
 	"github.com/feytox/kabanbot/internal/storage/sqlite"
@@ -52,21 +50,17 @@ func run(ctx context.Context) error {
 	}
 	defer func() { _ = db.Close() }()
 
-	var box *secrets.Box
-	if key, _ := cfg.MasterKeyBytes(); key != nil {
-		if box, err = secrets.New(key); err != nil {
-			return err
-		}
-	} else {
-		log.Warn("MASTER_KEY is not set: users cannot connect their own models")
-	}
-
-	fallback, err := defaultTarget(ctx, cfg.LLM)
+	key, err := cfg.MasterKeyBytes()
 	if err != nil {
 		return err
 	}
-	modelStore := newModelStore(db, box)
-	models := registry.New(modelStore, fallback, cfg.OwnerID)
+	box, err := secrets.New(key)
+	if err != nil {
+		return err
+	}
+
+	modelStore := sqlite.NewModelStore(db, box)
+	models := registry.New(modelStore, cfg.OwnerID)
 	messages := sqlite.NewMessageStore(db)
 	chats := sqlite.NewChatStore(db)
 
@@ -87,27 +81,6 @@ func run(ctx context.Context) error {
 	g.Go(func() error { return bot.Run(ctx) })
 	g.Go(func() error { return serveHealth(ctx, cfg.HTTPAddr, db) })
 	return g.Wait()
-}
-
-// newModelStore avoids passing a typed nil *secrets.Box as a non-nil interface.
-func newModelStore(db *sqlite.DB, box *secrets.Box) *sqlite.ModelStore {
-	if box == nil {
-		return sqlite.NewModelStore(db, nil)
-	}
-	return sqlite.NewModelStore(db, box)
-}
-
-func defaultTarget(ctx context.Context, c config.DefaultLLM) (llm.Target, error) {
-	// The default model is configured by the operator, so it may point at a local server.
-	client, err := registry.NewClient(ctx, domain.Provider{
-		Kind:    c.Provider,
-		BaseURL: c.BaseURL,
-		APIKey:  domain.Secret(c.APIKey),
-	}, nil)
-	if err != nil {
-		return llm.Target{}, fmt.Errorf("default llm: %w", err)
-	}
-	return llm.Target{Client: client, Model: domain.Model{Name: c.Model, DisplayName: c.Model}}, nil
 }
 
 // serveHealth serves /healthz for container health checks.

@@ -49,9 +49,6 @@ type Models interface {
 	CreateModel(ctx context.Context, m domain.Model) (int64, error)
 	UpdateModel(ctx context.Context, m domain.Model) error
 	DeleteModel(ctx context.Context, id int64) error
-
-	// CanStoreKeys reports whether API keys can be encrypted, i.e. MASTER_KEY is set.
-	CanStoreKeys() bool
 }
 
 // Chats persists chats and users.
@@ -99,9 +96,6 @@ func New(models Models, chats Chats, admins Admins, clients Clients, ownerID int
 
 // IsOwner reports whether u is the bot owner.
 func (s *Service) IsOwner(u User) bool { return s.ownerID != 0 && u.ID == s.ownerID }
-
-// CanStoreKeys reports whether providers can be saved, which needs MASTER_KEY.
-func (s *Service) CanStoreKeys() bool { return s.models.CanStoreKeys() }
 
 // Seen records the user's current names so others see who owns a model.
 func (s *Service) Seen(ctx context.Context, u User) error {
@@ -338,7 +332,7 @@ func (s *Service) UpdateModel(ctx context.Context, u User, id int64, in ModelInp
 	return m, nil
 }
 
-// DeleteModel removes one of the user's models. Chats using it fall back to the default model.
+// DeleteModel removes one of the user's models. Chats using it are left without a model.
 func (s *Service) DeleteModel(ctx context.Context, u User, id int64) error {
 	if _, err := s.ownModel(ctx, u, id); err != nil {
 		return err
@@ -449,7 +443,7 @@ func ValidateMaxTokens(n int64) error {
 // ChatView is a chat as its admins see it.
 type ChatView struct {
 	domain.Chat
-	// SummaryModel describes the bound model; nil means the default model.
+	// SummaryModel describes the bound model; nil means none.
 	SummaryModel *domain.ModelOption
 }
 

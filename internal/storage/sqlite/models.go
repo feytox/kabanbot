@@ -27,9 +27,6 @@ type ModelStore struct {
 // then providers cannot be created or used.
 func NewModelStore(db *DB, box Crypter) *ModelStore { return &ModelStore{db: db, box: box} }
 
-// CanStoreKeys reports whether a master key is configured, so providers can be saved.
-func (s *ModelStore) CanStoreKeys() bool { return s.box != nil }
-
 // SummaryModel returns the model bound to the chat for summaries, or domain.ErrNotFound.
 func (s *ModelStore) SummaryModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error) {
 	row, err := s.db.q.ChatSummaryModel(ctx, chatID)
@@ -173,7 +170,7 @@ func (s *ModelStore) UpdateModel(ctx context.Context, m domain.Model) error {
 	return nil
 }
 
-// DeleteModel deletes a model. Chats using it fall back to the default model.
+// DeleteModel deletes a model. Chats using it are left without a model.
 func (s *ModelStore) DeleteModel(ctx context.Context, id int64) error {
 	if err := s.db.q.DeleteModel(ctx, id); err != nil {
 		return fmt.Errorf("delete model: %w", err)

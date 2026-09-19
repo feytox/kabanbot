@@ -10,6 +10,9 @@ import (
 // ErrNotFound is returned by stores when a requested entity does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrNoModel is returned when a chat has no model bound for the task.
+var ErrNoModel = errors.New("no model bound to the chat")
+
 // ErrNoMasterKey is returned when provider API keys cannot be encrypted or decrypted
 // because MASTER_KEY is not configured.
 var ErrNoMasterKey = errors.New("MASTER_KEY is not configured")
@@ -99,7 +102,7 @@ type Chat struct {
 	ID       int64
 	Title    string
 	Settings ChatSettings
-	// SummaryModelID is the model bound for summaries; nil means the default model.
+	// SummaryModelID is the model bound for summaries; nil means none, so summaries are off.
 	SummaryModelID *int64
 }
 

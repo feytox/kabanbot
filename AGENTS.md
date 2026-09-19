@@ -33,10 +33,10 @@ Ports & adapters. Use cases never import Telegram, SQL or provider SDKs.
 - `internal/llm` is the provider-agnostic port (`Client`, `Request`, `Target`), with adapters `llm/openai` (also used for OpenRouter) and `llm/gemini`.
   - Adapters turn HTTP and network failures into `*llm.Error` (status, provider message, `Retry-After` or Gemini's `RetryInfo`).
   - `llm.Retrying` retries 429, 5xx, timeouts and dropped connections with growing delays; SDK retries are off. `llm.WithRetryObserver` lets the caller show progress.
-- `llm/registry` resolves which model a chat uses: its bound model, or the env default (`LLM_*`). Clients of users' providers go through `internal/netguard`, which blocks private and loopback addresses (SSRF). Only `OWNER_ID`'s providers and the env default may reach local servers.
+- `llm/registry` resolves which model a chat uses: its bound model. There is no default model; an unbound chat gets `domain.ErrNoModel`. Clients of users' providers go through `internal/netguard`, which blocks private and loopback addresses (SSRF). Only `OWNER_ID`'s providers may reach local servers.
 - `internal/storage/sqlite`: SQLite (`ncruces/go-sqlite3`, no CGO), goose migrations embedded, sqlc queries in `sqlcgen`.
   - Migration `00001` is the Python schema, so old `data/messages.db` files upgrade in place.
-  - Provider keys are AES-GCM encrypted by the store (`internal/secrets`, `MASTER_KEY`). `domain.Secret` redacts itself in logs.
+  - Provider keys are AES-GCM encrypted by the store (`internal/secrets`, `MASTER_KEY`, which is required). `domain.Secret` redacts itself in logs.
 - `internal/telegram` is the Bot API adapter (`mymmrac/telego`, Bot API 10.3).
   - Messages are ingested synchronously in update order; slow handlers run in bounded goroutines.
   - `my_chat_member` updates and group messages keep the `chats` table current.

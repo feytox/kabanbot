@@ -108,15 +108,8 @@ func (m *menu) handle(ctx context.Context, v view, r route) (outcome, error) {
 	case opProviders:
 		return show(m.providers(ctx, v))
 	case opProviderNew:
-		if !m.svc.CanStoreKeys() {
-			return outcome{}, domain.ErrNoMasterKey
-		}
 		return show(m.providerKinds(), nil)
 	case opProviderCreate:
-		// Checked up front so the user does not type a key only to have it rejected.
-		if !m.svc.CanStoreKeys() {
-			return outcome{}, domain.ErrNoMasterKey
-		}
 		return outcome{dialog: m.newProviderDialog(v, domain.ProviderKind(r.word))}, nil
 	case opProvider:
 		return show(m.provider(ctx, v, r.id))
@@ -178,8 +171,6 @@ func userError(err error) (string, bool) {
 		return "Не найдено: возможно, это уже удалили.", true
 	case errors.Is(err, settings.ErrForbidden):
 		return "Настройки бота в группе могут менять только её администраторы.", true
-	case errors.Is(err, domain.ErrNoMasterKey):
-		return "Владелец бота не задал MASTER_KEY, поэтому подключать свои модели нельзя. Как его создать — в README бота.", true
 	}
 	return "Не получилось, попробуйте ещё раз.", false
 }
@@ -255,6 +246,9 @@ func (m *menu) groupScreen(v view, c settings.ChatView) screen {
 	st := c.Settings
 	text := "<b>Настройки «" + html.EscapeString(c.Title) + "»</b>\n\n" +
 		"Модель для пересказов: " + html.EscapeString(summaryModelName(c))
+	if c.SummaryModel == nil {
+		text += "\n\nПока модель не выбрана, /summary не работает."
+	}
 	if !st.Enabled {
 		text += "\n\nБот выключен в этом чате: он не делает пересказы и не отзывается на @all."
 	}
@@ -289,7 +283,7 @@ func (m *menu) groupScreen(v view, c settings.ChatView) screen {
 
 func summaryModelName(c settings.ChatView) string {
 	if c.SummaryModel == nil {
-		return "по умолчанию"
+		return "не выбрана"
 	}
 	return c.SummaryModel.DisplayName
 }
@@ -340,7 +334,7 @@ func (m *menu) groupModels(ctx context.Context, v view, chatID int64) (screen, e
 		return label
 	}
 	rows := [][]telego.InlineKeyboardButton{
-		row(button(mark(current == nil, "По умолчанию"), route{op: opGroupModel, id: chatID})),
+		row(button(mark(current == nil, "Не выбрана"), route{op: opGroupModel, id: chatID})),
 	}
 	for _, o := range capped(usable) {
 		label := mark(current != nil && current.ID == o.ID, optionLabel(o, v.user))
@@ -401,11 +395,7 @@ func (m *menu) providers(ctx context.Context, v view) (screen, error) {
 		return screen{}, err
 	}
 	s := screen{text: "<b>Мои модели</b>\n\n"}
-	canStore := m.svc.CanStoreKeys()
 	switch {
-	case !canStore:
-		s.text += "Подключать свои модели пока нельзя: владелец бота не задал MASTER_KEY, которым шифруются ключи. " +
-			"Пересказы в группах делает модель по умолчанию."
 	case len(list) == 0:
 		s.text += "Подключите провайдера — OpenRouter, Gemini или любой OpenAI-совместимый API — и добавьте в него модели. " +
 			"Их можно будет выбрать для пересказов в группах, где вы администратор."
@@ -416,11 +406,10 @@ func (m *menu) providers(ctx context.Context, v view) (screen, error) {
 		label := p.Name + " · " + plural(len(p.Models), "модель", "модели", "моделей")
 		s.rows = append(s.rows, row(button(label, route{op: opProvider, id: p.ID})))
 	}
-	add := styled(button("➕ Подключить провайдера", route{op: opProviderNew}), telego.ButtonStyleSuccess)
-	if !canStore {
-		add = disabled("➕ Подключить провайдера")
-	}
-	s.rows = append(s.rows, row(add), back("Назад", route{op: opHome}))
+	s.rows = append(s.rows,
+		row(styled(button("➕ Подключить провайдера", route{op: opProviderNew}), telego.ButtonStyleSuccess)),
+		back("Назад", route{op: opHome}),
+	)
 	return s, nil
 }
 
@@ -534,7 +523,7 @@ func (m *menu) confirmDeleteProvider(ctx context.Context, v view, id int64) (scr
 	}
 	text := "Удалить провайдера «" + html.EscapeString(p.Name) + "»"
 	if n := len(p.Models); n > 0 {
-		text += " вместе с его моделями (" + strconv.Itoa(n) + ")? Группы, где они выбраны, перейдут на модель по умолчанию."
+		text += " вместе с его моделями (" + strconv.Itoa(n) + ")? Группы, где они выбраны, останутся без модели."
 	} else {
 		text += "?"
 	}
@@ -946,7 +935,7 @@ func (m *menu) confirmDeleteModel(ctx context.Context, v view, id int64) (screen
 	}
 	text := "Удалить модель «" + html.EscapeString(mv.DisplayName) + "»?"
 	if len(mv.Chats) > 0 {
-		text += " Группы, где она выбрана, перейдут на модель по умолчанию."
+		text += " Группы, где она выбрана, останутся без модели."
 	}
 	return confirmScreen(text, route{op: opModelDrop, id: id}, route{op: opModel, id: id}), nil
 }

@@ -23,7 +23,7 @@ const (
 	opGroup       = "g"  // g:<chat> group settings
 	opGroupToggle = "gt" // gt:<chat>:<on|sum|all>
 	opGroupModels = "gp" // gp:<chat> summary model picker
-	opGroupModel  = "gm" // gm:<chat>:<model>; model 0 is the default model
+	opGroupModel  = "gm" // gm:<chat>:<model>; model 0 unbinds the model
 
 	opProviders      = "pl"  // the user's providers
 	opProviderNew    = "pn"  // choose the kind of a new provider

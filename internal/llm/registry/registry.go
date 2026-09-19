@@ -21,10 +21,9 @@ type ModelStore interface {
 	SummaryModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error)
 }
 
-// Registry resolves chats to LLM targets, falling back to a default target.
+// Registry resolves chats to LLM targets.
 type Registry struct {
-	store    ModelStore
-	fallback llm.Target
+	store ModelStore
 	// trustedOwner may point providers at any address, e.g. a local model server.
 	// Everyone else's providers may only reach public addresses.
 	trustedOwner int64
@@ -35,21 +34,21 @@ type Registry struct {
 }
 
 // New creates a Registry. Providers owned by trustedOwner are not restricted to public addresses.
-func New(store ModelStore, fallback llm.Target, trustedOwner int64) *Registry {
+func New(store ModelStore, trustedOwner int64) *Registry {
 	return &Registry{
 		store:        store,
-		fallback:     fallback,
 		trustedOwner: trustedOwner,
 		guarded:      netguard.NewClient(),
 		clients:      make(map[int64]llm.Client),
 	}
 }
 
-// SummaryTarget returns the target to use for summaries in the chat.
+// SummaryTarget returns the target to use for summaries in the chat,
+// or domain.ErrNoModel if the chat has none.
 func (r *Registry) SummaryTarget(ctx context.Context, chatID int64) (llm.Target, error) {
 	model, provider, err := r.store.SummaryModel(ctx, chatID)
 	if errors.Is(err, domain.ErrNotFound) {
-		return r.fallback, nil
+		return llm.Target{}, domain.ErrNoModel
 	}
 	if err != nil {
 		return llm.Target{}, fmt.Errorf("load chat model: %w", err)

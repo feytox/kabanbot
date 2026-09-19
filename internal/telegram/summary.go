@@ -49,8 +49,11 @@ func (b *Bot) handleSummary(ctx context.Context, msg *telego.Message) {
 }
 
 func (b *Bot) summaryError(ctx context.Context, chatID int64, err error) string {
-	if errors.Is(err, summary.ErrNoHistory) {
+	switch {
+	case errors.Is(err, summary.ErrNoHistory):
 		return "Не нашёл сохранённых сообщений начиная с этого. Я вижу только сообщения, отправленные после моего добавления в чат."
+	case errors.Is(err, domain.ErrNoModel):
+		return "В этом чате не выбрана модель для пересказов. Администратор может выбрать её командой /settings."
 	}
 	b.log.ErrorContext(ctx, "summarize", "chat_id", chatID, "err", err)
 	text := "❌ Не получилось сделать пересказ."
@@ -110,8 +113,6 @@ func describeLLMError(err error) string {
 	case ok:
 	case errors.Is(err, context.DeadlineExceeded):
 		return "Модель не успела ответить."
-	case errors.Is(err, domain.ErrNoMasterKey):
-		return "Модель группы недоступна: владелец бота не задал MASTER_KEY."
 	default:
 		return ""
 	}

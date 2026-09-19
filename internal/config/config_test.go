@@ -8,7 +8,6 @@ import (
 
 func TestLoad(t *testing.T) {
 	t.Setenv("BOT_TOKEN", "123:abc")
-	t.Setenv("LLM_MODEL", "gpt-5-mini")
 	t.Setenv("ALLOWED_GROUPS", "-100,-200")
 	t.Setenv("MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
 
@@ -16,7 +15,7 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CacheSize != 1000 || cfg.DBPath != "data/messages.db" || cfg.LLM.Provider != "openai" {
+	if cfg.CacheSize != 1000 || cfg.DBPath != "data/messages.db" {
 		t.Errorf("defaults not applied: %+v", cfg)
 	}
 	if !cfg.IsAllowed(-200) || cfg.IsAllowed(-300) {
@@ -29,17 +28,24 @@ func TestLoad(t *testing.T) {
 
 func TestLoadValidates(t *testing.T) {
 	t.Setenv("BOT_TOKEN", "123:abc")
-	t.Setenv("LLM_PROVIDER", "anthropic")
+	t.Setenv("CACHE_SIZE", "0")
 	t.Setenv("MASTER_KEY", "c2hvcnQ=")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("want error")
 	}
-	for _, want := range []string{"LLM_PROVIDER", "LLM_MODEL", "MASTER_KEY"} {
+	for _, want := range []string{"CACHE_SIZE", "MASTER_KEY"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
+	}
+}
+
+func TestMasterKeyIsRequired(t *testing.T) {
+	t.Setenv("BOT_TOKEN", "123:abc")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MASTER_KEY") {
+		t.Fatalf("err = %v, want MASTER_KEY required", err)
 	}
 }
 
