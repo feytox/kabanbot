@@ -1,20 +1,62 @@
 # AGENTS.md
 
-Kabanbot is a Telegram group bot that caches chat messages and summarizes them with an LLM (`/summary` as a reply summarizes everything from that message onward). It also pings everyone on `@all`.
+Kabanbot is a Telegram group bot. It caches chat messages and summarizes them with an LLM: `/summary` sent as a reply summarizes everything from that message onward. It pings everyone on `@all`, and people can talk to it: a mention, a reply to its message, `/ask`, a name an admin set for the group (whole words or a regex, off by default), or any private message. Chat admins can change its personality in the menu or by asking it. Inline-button menus let users connect their own LLM providers and models (in private chat) and configure each group.
 
-**Status:** this code is being migrated from Python to Go and cleaned up along the way. Don't treat the current Python layout as the target architecture. The Python baseline is tagged `old`, and an earlier rough Go attempt lives on the `experiment/go` branch.
+**Status:** being rebuilt in Go in phases; see **`docs/ROADMAP.md`** for the detailed plan.
+- Phases 1–3 are done. Phase 3 replaced the Mini App (phase 2) with inline-button menus, so the bot needs no public HTTPS site.
+- Phase 4 (chatting, personality via tool calls, limits, usage stats) is implemented; the manual check from the roadmap is still pending.
 
-## Run
+The old Python bot is tagged `old`.
 
-- Local: `uv sync && uv run python -m kabanbot` (Python 3.13+)
-- Docker: `docker compose up -d --build` (mounts `./data` for the SQLite DB)
-- Config comes from `.env` (see `kabanbot/config.py`): `BOT_TOKEN`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, `DB_PATH`, `CACHE_SIZE`, `ALLOWED_GROUPS`.
+## Commands
 
-There are no tests or linters yet.
+- `make run` — run locally (reads env; see `.env.example`)
+- `make test` — `go test -race ./...`. Single test: `go test ./internal/app/settings -run TestChatAccessAndBinding`
+- `make lint` — golangci-lint v2 plus `go fix -diff`. `make fmt` formats with gofumpt and goimports.
+- `make generate` — regenerate sqlc code after editing `internal/storage/sqlite/{migrations,queries}`. The generated code is committed; CI checks it is up to date.
+- `docker compose up -d --build` — production-like run with `./data` mounted.
 
-## Architecture (Python, current)
+## Architecture
 
-- `__main__.py` wires everything together: aiogram `Dispatcher`, the middlewares, and services injected via `dp["cache"]` / `dp["llm"]`.
-- Middlewares on the group router run in order: `WhitelistMiddleware` (drops chats not in `ALLOWED_GROUPS`; an empty list allows all) → `CacheMiddleware` (stores every non-command message, with placeholders for media).
-- `services/cache.py` holds the SQLite (aiosqlite) message store, capped at `CACHE_SIZE` per chat. `services/llm.py` calls litellm using the system prompt from `prompts/summary.md`.
-- `handlers/groups.py` has `/summary` and `@all`. The LLM output is converted to Telegram markdown via `telegramify-markdown`.
+Ports & adapters. Use cases never import Telegram, SQL or provider SDKs.
+
+- `cmd/kabanbot` only wires things together and handles shutdown. An HTTP server on `HTTP_ADDR` serves only `/healthz`.
+- `internal/app/*` holds use cases (`ingest`, `summary`, `mention`, `settings`, `chat`). Each declares the small interfaces it consumes.
+- **`app/settings` holds every settings authorization rule.** The Telegram menus call it and never check rights themselves.
+  - Only the owner can see or change a provider or model; other users get `ErrNotFound`.
+  - API keys are write-only: never returned, only `key_hint`.
+  - Changing `base_url` requires re-entering the key.
+  - Only `OWNER_ID` may mark a provider `shared`; its models can then be picked in any group.
+  - Chat settings need chat-admin rights (`getChatMember`, cached for 5 min). Binding a model requires it to be the user's own or shared; keeping a model someone else bound is allowed.
+  - A model's owner can unbind it from any chat.
+  - `Validate*` functions check single fields so the menus can reject input step by step; the service checks them again.
+  - A private chat (positive ID, equal to the user's) is managed by its user, who cannot change its rate limits.
+  - Personality changes (menu or tool) go into `personality_history`; reverting checks that the entry belongs to the chat.
+- `app/chat` answers from the last 50 messages plus the chat's personality, streaming progress through a callback.
+  - The personality tools are offered only when `settings.CanManage` says the author is an admin, and every tool call goes through `settings` again, so a model calling a tool it was not offered changes nothing.
+  - At most 5 model rounds per answer; the last offers no tools. An in-memory limiter counts answers per chat and per user per hour (`chats.settings_json`).
+  - The chat model falls back to the summary model. Both summaries and chat record `llm_usage`.
+- `internal/llm` is the provider-agnostic port (`Client` with `Complete` and `Stream`, `Request`, `Tool`/`ToolCall`, `Target`), with adapters `llm/openai` (also used for OpenRouter) and `llm/gemini`. Gemini tool calls carry a thought signature that must be sent back.
+  - Adapters turn HTTP and network failures into `*llm.Error` (status, provider message, `Retry-After` or Gemini's `RetryInfo`).
+  - `llm.Retrying` retries 429, 5xx, timeouts and dropped connections with growing delays (a stream only before its first chunk); SDK retries are off. `llm.WithRetryObserver` lets the caller show progress.
+- `llm/registry` resolves which model a chat uses: its bound model. There is no default model; an unbound chat gets `domain.ErrNoModel`. Clients of users' providers go through `internal/netguard`, which blocks private and loopback addresses (SSRF). Only `OWNER_ID`'s providers may reach local servers.
+- `internal/storage/sqlite`: SQLite (`ncruces/go-sqlite3`, no CGO), goose migrations embedded, sqlc queries in `sqlcgen`.
+  - Migration `00001` is the Python schema, so old `data/messages.db` files upgrade in place.
+  - Provider keys are AES-GCM encrypted by the store (`internal/secrets`, `MASTER_KEY`, which is required). `domain.Secret` redacts itself in logs.
+- `internal/telegram` is the Bot API adapter (`mymmrac/telego`, Bot API 10.3).
+  - Messages are ingested synchronously in update order; slow handlers run in bounded goroutines.
+  - `my_chat_member` updates and group messages keep the `chats` table current.
+  - Replies use **Rich Messages** (`sendRichMessage` with GFM-like `markdown`), with a fallback to plain text. Service notices are **ephemeral**.
+  - `/summary` replies at once with a public status message, updates it on retries, and edits it into the summary or a readable error (`describeLLMError`).
+  - Chat answers (`chat.go`): in private chats a «💭 Думаю…» message with a «Остановить» button (`stop:<id>` cancels the context) shows retries and tool runs, then is deleted and the whole answer is sent; in groups one message is edited at most every 1.5 s, or, with «Стриминг ответов» off, the answer is sent once ready. The bot's answers are ingested with `is_bot` so it sees its side of the talk. Dialog answers are never ingested: they may be API keys.
+  - **Settings menus** (`menu.go` renders screens as data, `menu_bot.go` does the Bot API calls). One message is one screen; buttons edit it in place.
+    - Callback data is `op[:id[:id2]][:word]`, at most 64 bytes, parsed only by `parseRoute` in `route.go`. It is untrusted: every press re-checks rights through `app/settings`, and a group menu only manages its own group.
+    - `/settings` in a group sends an **ephemeral** menu (switches, summary model) that only the calling admin sees. Providers, keys and models live only in private chat (`errPrivateOnly`), reached by `/start`, `/settings` or `t.me/<bot>?start=models`.
+    - Text input is a per-user dialog in memory (`dialog.go`, 10-minute TTL, `/cancel` or any command ends it). The bot asks with `ForceReply`, and API-key messages are deleted as soon as they arrive.
+- `prompts/` holds the embedded system prompts. The summary prompt describes the Rich Markdown dialect to the model.
+
+## Conventions
+
+- Go 1.27 idioms: `encoding/json/v2`, `new(expr)`, `errors.AsType`, `wg.Go`, `t.Context()`, `slog`.
+- Messages shown to users are in Russian.
+- The bot needs privacy mode disabled to see every group message.

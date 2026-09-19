@@ -1,29 +1,16 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kabanbot ./cmd/kabanbot
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV UV_COMPILE_BYTECODE=1
-
+# Runs as root: ./data is bind-mounted, and Docker creates it root-owned on a clean start
+# (as are databases left by the Python version).
+FROM gcr.io/distroless/static-debian13
 WORKDIR /app
-
-# Copy dependency files first to utilize cache
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies without installing the project itself
-RUN uv sync --frozen --no-install-project --no-dev
-
-# Copy the application code
-COPY kabanbot/ kabanbot/
-COPY prompts/ prompts/
-
-# Install the project
-RUN uv sync --frozen --no-dev
-
-# Add virtual environment to PATH
-ENV PATH="/app/.venv/bin:$PATH"
-
-# Run the application
-CMD ["python", "-m", "kabanbot"]
+COPY --from=build /out/kabanbot /app/kabanbot
+EXPOSE 8080
+ENTRYPOINT ["/app/kabanbot"]
