@@ -67,7 +67,7 @@ func (b *Bot) summaryError(ctx context.Context, chatID int64, err error) string 
 // setStatus replaces the status message's text, or sends the text as a reply if there is no status.
 func (b *Bot) setStatus(ctx context.Context, msg, status *telego.Message, text string) {
 	if status == nil {
-		if err := b.replyPlain(ctx, msg, text); err != nil {
+		if _, err := b.replyPlain(ctx, msg, text); err != nil {
 			b.log.ErrorContext(ctx, "send summary status", "chat_id", msg.Chat.ID, "err", err)
 		}
 		return
@@ -101,7 +101,7 @@ func (b *Bot) showSummary(ctx context.Context, msg, status *telego.Message, mark
 			}
 		}
 	}
-	if err := b.replyMarkdown(ctx, msg, markdown); err != nil {
+	if _, err := b.replyMarkdown(ctx, msg, markdown); err != nil {
 		b.log.ErrorContext(ctx, "send summary", "chat_id", msg.Chat.ID, "err", err)
 	}
 }

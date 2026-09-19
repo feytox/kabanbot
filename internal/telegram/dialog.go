@@ -74,6 +74,14 @@ func (ds *dialogs) start(userID int64, d *dialog) step {
 	return d.steps[0]
 }
 
+// has reports whether the user is in a dialog, so their next message is an answer.
+func (ds *dialogs) has(userID int64) bool {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	d, ok := ds.active[userID]
+	return ok && time.Now().Before(d.expires)
+}
+
 // cancel drops the user's dialog and reports whether there was one.
 func (ds *dialogs) cancel(userID int64) bool {
 	ds.mu.Lock()

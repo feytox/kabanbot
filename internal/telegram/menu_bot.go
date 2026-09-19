@@ -68,13 +68,21 @@ func (b *Bot) onPrivateMessage(ctx context.Context, msg *telego.Message) {
 	}
 	cmd, isCmd := parseCommand(msg.Text)
 	if !isCmd {
-		b.spawn(ctx, func(ctx context.Context) { b.handleDialogAnswer(ctx, msg, u) })
+		// An answer to a dialog may be an API key: it must never reach the history.
+		if b.dialogs.has(u.ID) {
+			b.spawn(ctx, func(ctx context.Context) { b.handleDialogAnswer(ctx, msg, u) })
+			return
+		}
+		b.touchChat(ctx, msg.Chat.ID, fullName(*msg.From), false)
+		b.ingest(ctx, toDomain(msg))
+		b.spawn(ctx, func(ctx context.Context) { b.handleChat(ctx, msg, u, true) })
 		return
 	}
 	// Any command ends the dialog, so a forgotten one never swallows a later message.
 	hadDialog := b.dialogs.cancel(u.ID)
 	switch cmd.Name {
 	case "start", "settings":
+		b.touchChat(ctx, msg.Chat.ID, fullName(*msg.From), false)
 		r := route{op: opHome}
 		if _, arg, _ := strings.Cut(msg.Text, " "); strings.TrimSpace(arg) == startParamModels {
 			r = route{op: opProviders}

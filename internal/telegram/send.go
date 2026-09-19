@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -19,13 +20,14 @@ const (
 	anonymousAdminID = 1087968824
 )
 
-// replyMarkdown sends Markdown as rich messages replying to msg.
+// replyMarkdown sends Markdown as rich messages replying to msg and returns the first one.
 // If Telegram rejects the formatting, the text is resent as plain messages.
-func (b *Bot) replyMarkdown(ctx context.Context, msg *telego.Message, markdown string) error {
+func (b *Bot) replyMarkdown(ctx context.Context, msg *telego.Message, markdown string) (*telego.Message, error) {
 	reply := &telego.ReplyParameters{MessageID: msg.MessageID, AllowSendingWithoutReply: true}
 	parts := split(markdown, richMessageLimit)
+	var first *telego.Message
 	for i, part := range parts {
-		_, err := b.api.SendRichMessage(ctx, &telego.SendRichMessageParams{
+		sent, err := b.api.SendRichMessage(ctx, &telego.SendRichMessageParams{
 			ChatID:          msg.Chat.ChatID(),
 			MessageThreadID: msg.MessageThreadID,
 			RichMessage:     telego.InputRichMessage{Markdown: part},
@@ -33,24 +35,29 @@ func (b *Bot) replyMarkdown(ctx context.Context, msg *telego.Message, markdown s
 		})
 		if err != nil {
 			b.log.WarnContext(ctx, "send rich message, falling back to plain text", "chat_id", msg.Chat.ID, "err", err)
-			return b.replyPlain(ctx, msg, strings.Join(parts[i:], "\n\n"))
+			plain, err := b.replyPlain(ctx, msg, strings.Join(parts[i:], "\n\n"))
+			return cmp.Or(first, plain), err
 		}
+		first = cmp.Or(first, sent)
 		reply = nil // only the first part replies to the command
 	}
-	return nil
+	return first, nil
 }
 
-// replyPlain sends unformatted text replying to msg.
-func (b *Bot) replyPlain(ctx context.Context, msg *telego.Message, text string) error {
+// replyPlain sends unformatted text replying to msg and returns the first message.
+func (b *Bot) replyPlain(ctx context.Context, msg *telego.Message, text string) (*telego.Message, error) {
+	var first *telego.Message
 	for _, part := range split(text, plainMessageLimit) {
 		params := tu.Message(msg.Chat.ChatID(), part).
 			WithMessageThreadID(msg.MessageThreadID).
 			WithReplyParameters(&telego.ReplyParameters{MessageID: msg.MessageID, AllowSendingWithoutReply: true})
-		if _, err := b.api.SendMessage(ctx, params); err != nil {
-			return fmt.Errorf("send message: %w", err)
+		sent, err := b.api.SendMessage(ctx, params)
+		if err != nil {
+			return first, fmt.Errorf("send message: %w", err)
 		}
+		first = cmp.Or(first, sent)
 	}
-	return nil
+	return first, nil
 }
 
 // notify sends a short service message that only the author of msg can see.

@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/feytox/kabanbot/internal/app/chat"
 	"github.com/feytox/kabanbot/internal/app/ingest"
 	"github.com/feytox/kabanbot/internal/app/mention"
 	"github.com/feytox/kabanbot/internal/app/settings"
@@ -68,12 +69,18 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	usage := sqlite.NewUsageStore(db)
+	settingsSvc := settings.New(modelStore, chats, tg, models, usage, cfg.OwnerID, log)
 	bot := telegram.NewBot(tg, telegram.Deps{
-		Ingest:   ingest.New(messages, cfg.CacheSize),
-		Summary:  summary.New(messages, models, chats, sqlite.NewUsageStore(db), prompts.Summary(), log),
-		Mention:  mention.New(messages, tg, log),
+		Ingest:  ingest.New(messages, cfg.CacheSize),
+		Summary: summary.New(messages, models, chats, usage, prompts.Summary(), log),
+		Mention: mention.New(messages, tg, log),
+		Chat: chat.New(chat.Deps{
+			History: messages, Models: models, Chats: chats, Settings: settingsSvc, Usage: usage,
+			Prompt: prompts.Chat(), BotID: tg.BotID(), Log: log,
+		}),
 		Chats:    chats,
-		Settings: settings.New(modelStore, chats, tg, models, sqlite.NewUsageStore(db), cfg.OwnerID, log),
+		Settings: settingsSvc,
 		Allowed:  cfg.IsAllowed,
 	}, log)
 

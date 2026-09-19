@@ -48,6 +48,7 @@ type Deps struct {
 	Ingest  Ingester
 	Summary Summarizer
 	Mention Mentioner
+	Chat    Chatter
 	Chats   Chats
 	// Settings backs the settings menus and makes all their authorization decisions.
 	Settings *settings.Service
@@ -75,6 +76,9 @@ func Connect(ctx context.Context, token string) (*Client, error) {
 	return &Client{api: api, me: me}, nil
 }
 
+// BotID returns the bot's own user ID.
+func (c *Client) BotID() int64 { return c.me.ID }
+
 // Bot receives updates and dispatches them.
 type Bot struct {
 	*Client
@@ -88,12 +92,15 @@ type Bot struct {
 	wg       sync.WaitGroup
 
 	// titles caches known chat titles so chats are written to the store only when they change.
-	titles sync.Map // chat ID -> title
+	titles sync.Map // chat ID -> chatState
+	// drafts holds the cancel funcs of answers being streamed in private chats.
+	drafts sync.Map // draftKey -> context.CancelFunc
 }
 
 var (
 	groupCommands = []telego.BotCommand{
 		{Command: "summary", Description: "Пересказ сообщений, начиная с того, на которое вы ответили"},
+		{Command: "ask", Description: "Спросить бота"},
 		{Command: "settings", Description: "Настройки бота в этом чате", IsEphemeral: true},
 	}
 	privateCommands = []telego.BotCommand{
@@ -125,7 +132,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 	updates, err := b.api.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
 		Timeout:        30,
-		AllowedUpdates: []string{"message", "callback_query", "my_chat_member"},
+		AllowedUpdates: []string{"message", "callback_query", "my_chat_member", "stopped_message_generation"},
 	})
 	if err != nil {
 		return fmt.Errorf("telegram: long polling: %w", err)
@@ -140,6 +147,8 @@ func (b *Bot) Run(ctx context.Context) error {
 			b.spawn(ctx, func(ctx context.Context) { b.handleCallback(ctx, u.CallbackQuery) })
 		case u.MyChatMember != nil:
 			b.onMembership(ctx, u.MyChatMember)
+		case u.StoppedMessageGeneration != nil:
+			b.onStopped(u.StoppedMessageGeneration)
 		}
 	}
 	b.wg.Wait()
@@ -181,23 +190,52 @@ func (b *Bot) onMessage(ctx context.Context, msg *telego.Message) {
 	if !isGroup(msg.Chat) || !b.deps.Allowed(msg.Chat.ID) {
 		return
 	}
-	b.touchChat(ctx, msg.Chat, true)
+	b.touchChat(ctx, msg.Chat.ID, msg.Chat.Title, true)
 
 	cmd, isCmd := parseCommand(msg.Text)
 	mine := isCmd && cmd.isFor(b.me.Username, b.commands)
-	if !mine {
-		if err := b.deps.Ingest.Ingest(ctx, toDomain(msg)); err != nil {
-			b.log.ErrorContext(ctx, "ingest message", "chat_id", msg.Chat.ID, "err", err)
-		}
+	switch {
+	case !mine:
+		b.ingest(ctx, toDomain(msg))
+	case cmd.Name == "ask":
+		// The question is part of the conversation; the command itself is not.
+		m := toDomain(msg)
+		m.Text = commandArgs(msg.Text)
+		b.ingest(ctx, m)
 	}
 
+	u, human := sender(msg)
 	switch {
 	case mine && cmd.Name == "summary":
 		b.spawn(ctx, func(ctx context.Context) { b.handleSummary(ctx, msg) })
 	case mine && cmd.Name == "settings":
 		b.spawn(ctx, func(ctx context.Context) { b.handleGroupSettings(ctx, msg) })
+	case mine && cmd.Name == "ask":
+		b.spawn(ctx, func(ctx context.Context) { b.handleAsk(ctx, msg) })
 	case strings.Contains(msg.Text, "@all"):
 		b.spawn(ctx, func(ctx context.Context) { b.handleMentionAll(ctx, msg) })
+	case human && !isCmd && b.isForBot(msg):
+		b.spawn(ctx, func(ctx context.Context) { b.handleChat(ctx, msg, u, false) })
+	}
+}
+
+// handleAsk answers /ask: a question after the command, or the message it replies to.
+func (b *Bot) handleAsk(ctx context.Context, msg *telego.Message) {
+	u, ok := sender(msg)
+	if !ok {
+		b.notify(ctx, msg, "Бот не отвечает от имени группы или анонимного администратора.")
+		return
+	}
+	if commandArgs(msg.Text) == "" && msg.ReplyToMessage == nil {
+		b.notify(ctx, msg, "Напишите вопрос после /ask или ответьте командой на сообщение.")
+		return
+	}
+	b.handleChat(ctx, msg, u, true)
+}
+
+func (b *Bot) ingest(ctx context.Context, m domain.Message) {
+	if err := b.deps.Ingest.Ingest(ctx, m); err != nil {
+		b.log.ErrorContext(ctx, "ingest message", "chat_id", m.ChatID, "err", err)
 	}
 }
 
@@ -206,25 +244,27 @@ func (b *Bot) onMembership(ctx context.Context, u *telego.ChatMemberUpdated) {
 	if !isGroup(u.Chat) {
 		return
 	}
-	b.touchChat(ctx, u.Chat, u.NewChatMember.MemberIsMember())
+	b.touchChat(ctx, u.Chat.ID, u.Chat.Title, u.NewChatMember.MemberIsMember())
+}
+
+// chatState is what the store knows about a chat.
+type chatState struct {
+	title  string
+	member bool
 }
 
 // touchChat records the chat in the store when it is new, renamed, or the bot joined or left.
-func (b *Bot) touchChat(ctx context.Context, c telego.Chat, member bool) {
-	if member {
-		if title, ok := b.titles.Load(c.ID); ok && title == c.Title {
-			return
-		}
-	}
-	if err := b.deps.Chats.TouchChat(ctx, c.ID, c.Title, member); err != nil {
-		b.log.ErrorContext(ctx, "track chat", "chat_id", c.ID, "err", err)
+// Private chats are recorded as non-members, so they never show up among groups.
+func (b *Bot) touchChat(ctx context.Context, id int64, title string, member bool) {
+	state := chatState{title, member}
+	if known, ok := b.titles.Load(id); ok && known == state {
 		return
 	}
-	if member {
-		b.titles.Store(c.ID, c.Title)
-	} else {
-		b.titles.Delete(c.ID)
+	if err := b.deps.Chats.TouchChat(ctx, id, title, member); err != nil {
+		b.log.ErrorContext(ctx, "track chat", "chat_id", id, "err", err)
+		return
 	}
+	b.titles.Store(id, state)
 }
 
 // features returns the chat's settings, falling back to defaults if they cannot be read.

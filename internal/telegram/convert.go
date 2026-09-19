@@ -102,6 +102,12 @@ func parseCommand(text string) (command, bool) {
 	return command{Name: strings.ToLower(name), Bot: bot}, true
 }
 
+// commandArgs returns the text after a command, e.g. the question in "/ask как дела?".
+func commandArgs(text string) string {
+	_, args, _ := strings.Cut(text, " ")
+	return strings.TrimSpace(args)
+}
+
 // isFor reports whether the command is addressed to this bot.
 func (c command) isFor(botUsername string, known map[string]bool) bool {
 	if c.Bot != "" {
