@@ -70,7 +70,7 @@ func run(ctx context.Context) error {
 	}
 	bot := telegram.NewBot(tg, telegram.Deps{
 		Ingest:   ingest.New(messages, cfg.CacheSize),
-		Summary:  summary.New(messages, models, prompts.Summary()),
+		Summary:  summary.New(messages, models, chats, sqlite.NewUsageStore(db), prompts.Summary(), log),
 		Mention:  mention.New(messages, tg, log),
 		Chats:    chats,
 		Settings: settings.New(modelStore, chats, tg, models, sqlite.NewUsageStore(db), cfg.OwnerID, log),

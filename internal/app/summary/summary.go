@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/feytox/kabanbot/internal/domain"
@@ -27,20 +28,33 @@ type Models interface {
 	SummaryTarget(ctx context.Context, chatID int64) (llm.Target, error)
 }
 
+// Chats reads a chat's summary style.
+type Chats interface {
+	Chat(ctx context.Context, id int64) (domain.Chat, error)
+}
+
+// Usage records how many tokens model calls used.
+type Usage interface {
+	RecordUsage(ctx context.Context, u domain.Usage) error
+}
+
 // Service summarizes chat history.
 type Service struct {
 	history History
 	models  Models
+	chats   Chats
+	usage   Usage
 	prompt  string
+	log     *slog.Logger
 }
 
 // New creates a Service.
-func New(history History, models Models, prompt string) *Service {
-	return &Service{history: history, models: models, prompt: prompt}
+func New(history History, models Models, chats Chats, usage Usage, prompt string, log *slog.Logger) *Service {
+	return &Service{history: history, models: models, chats: chats, usage: usage, prompt: prompt, log: log}
 }
 
-// Summarize returns a Markdown summary of the chat starting at fromMessageID.
-func (s *Service) Summarize(ctx context.Context, chatID int64, fromMessageID int) (string, error) {
+// Summarize returns a Markdown summary of the chat starting at fromMessageID, asked for by userID.
+func (s *Service) Summarize(ctx context.Context, chatID, userID int64, fromMessageID int) (string, error) {
 	msgs, err := s.history.Since(ctx, chatID, fromMessageID)
 	if err != nil {
 		return "", err
@@ -53,13 +67,26 @@ func (s *Service) Summarize(ctx context.Context, chatID int64, fromMessageID int
 	if err != nil {
 		return "", err
 	}
-	req := target.Request(s.prompt, llm.Message{
+	system := s.prompt
+	if c, err := s.chats.Chat(ctx, chatID); err != nil {
+		s.log.WarnContext(ctx, "load summary style", "chat_id", chatID, "err", err)
+	} else if c.SummaryStyle != "" {
+		system += "\n\n<style>\nАдминистраторы чата попросили писать пересказы так:\n" + c.SummaryStyle + "\n</style>"
+	}
+	req := target.Request(system, llm.Message{
 		Role:    llm.RoleUser,
 		Content: "Messages:\n```\n" + Transcript(msgs) + "\n```",
 	})
 	resp, err := target.Client.Complete(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("summarize: %w", err)
+	}
+	err = s.usage.RecordUsage(ctx, domain.Usage{
+		ChatID: chatID, UserID: userID, ModelID: target.Model.ID, Kind: domain.UsageSummary,
+		TokensIn: resp.Usage.InputTokens, TokensOut: resp.Usage.OutputTokens,
+	})
+	if err != nil {
+		s.log.WarnContext(ctx, "record usage", "chat_id", chatID, "err", err)
 	}
 	return strings.TrimSpace(resp.Text), nil
 }

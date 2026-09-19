@@ -40,7 +40,8 @@ func (b *Bot) handleSummary(ctx context.Context, msg *telego.Message) {
 		b.setStatus(ctx, msg, status, fmt.Sprintf("%s\n\n%s: %s. Повторю через %.0f с (попытка %d из %d).",
 			summaryPending, e.Err.Provider, problem(e.Err), e.Delay.Seconds(), e.Attempt+1, e.Attempts))
 	})
-	text, err := b.deps.Summary.Summarize(retryCtx, msg.Chat.ID, msg.ReplyToMessage.MessageID)
+	userID, _, _ := author(msg)
+	text, err := b.deps.Summary.Summarize(retryCtx, msg.Chat.ID, userID, msg.ReplyToMessage.MessageID)
 	if err != nil {
 		b.setStatus(ctx, msg, status, b.summaryError(ctx, msg.Chat.ID, err))
 		return

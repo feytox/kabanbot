@@ -29,7 +29,7 @@ type Ingester interface {
 
 // Summarizer summarizes chat history.
 type Summarizer interface {
-	Summarize(ctx context.Context, chatID int64, fromMessageID int) (string, error)
+	Summarize(ctx context.Context, chatID, userID int64, fromMessageID int) (string, error)
 }
 
 // Mentioner resolves @all targets.

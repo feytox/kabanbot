@@ -19,6 +19,8 @@ import (
 type ModelStore interface {
 	// SummaryModel returns the model bound to the chat for summaries, or domain.ErrNotFound.
 	SummaryModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error)
+	// ChatModel returns the model the chat talks with, or domain.ErrNotFound.
+	ChatModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error)
 }
 
 // Registry resolves chats to LLM targets.
@@ -46,7 +48,19 @@ func New(store ModelStore, trustedOwner int64) *Registry {
 // SummaryTarget returns the target to use for summaries in the chat,
 // or domain.ErrNoModel if the chat has none.
 func (r *Registry) SummaryTarget(ctx context.Context, chatID int64) (llm.Target, error) {
-	model, provider, err := r.store.SummaryModel(ctx, chatID)
+	return r.target(ctx, r.store.SummaryModel, chatID)
+}
+
+// ChatTarget returns the target the bot talks with in the chat: its chat model, or else its
+// summary model. It returns domain.ErrNoModel if the chat has neither.
+func (r *Registry) ChatTarget(ctx context.Context, chatID int64) (llm.Target, error) {
+	return r.target(ctx, r.store.ChatModel, chatID)
+}
+
+type modelLookup func(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error)
+
+func (r *Registry) target(ctx context.Context, lookup modelLookup, chatID int64) (llm.Target, error) {
+	model, provider, err := lookup(ctx, chatID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return llm.Target{}, domain.ErrNoModel
 	}

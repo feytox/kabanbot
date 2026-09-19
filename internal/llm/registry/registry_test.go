@@ -24,10 +24,17 @@ func (f *fakeStore) SummaryModel(context.Context, int64) (domain.Model, domain.P
 	return f.model, f.provider, f.err
 }
 
+func (f *fakeStore) ChatModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error) {
+	return f.SummaryModel(ctx, chatID)
+}
+
 func TestSummaryTargetWithoutBoundModel(t *testing.T) {
 	r := New(&fakeStore{err: domain.ErrNotFound}, 0)
 	if _, err := r.SummaryTarget(t.Context(), 1); !errors.Is(err, domain.ErrNoModel) {
 		t.Fatalf("err = %v, want ErrNoModel", err)
+	}
+	if _, err := r.ChatTarget(t.Context(), 1); !errors.Is(err, domain.ErrNoModel) {
+		t.Fatalf("chat: err = %v, want ErrNoModel", err)
 	}
 }
 

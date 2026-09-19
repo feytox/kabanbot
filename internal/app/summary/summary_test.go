@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -36,6 +37,24 @@ func (f *fakeClient) Complete(_ context.Context, req llm.Request) (llm.Response,
 
 type fakeModels struct{ target llm.Target }
 
+type fakeChats struct{ style string }
+
+func (f fakeChats) Chat(context.Context, int64) (domain.Chat, error) {
+	return domain.Chat{SummaryStyle: f.style}, nil
+}
+
+type fakeUsage struct{ got []domain.Usage }
+
+func (f *fakeUsage) RecordUsage(_ context.Context, u domain.Usage) error {
+	f.got = append(f.got, u)
+	return nil
+}
+
+func newService(h History, m Models, style string) (*Service, *fakeUsage) {
+	usage := &fakeUsage{}
+	return New(h, m, fakeChats{style}, usage, "SYSTEM", slog.New(slog.DiscardHandler)), usage
+}
+
 func (f fakeModels) SummaryTarget(context.Context, int64) (llm.Target, error) { return f.target, nil }
 
 func TestSummarize(t *testing.T) {
@@ -46,12 +65,12 @@ func TestSummarize(t *testing.T) {
 	}
 	temp := 0.2
 	client := &fakeClient{resp: "  ## Итог\n- привет  "}
-	svc := New(history, fakeModels{llm.Target{
+	svc, usage := newService(history, fakeModels{llm.Target{
 		Client: client,
-		Model:  domain.Model{Name: "m1", Params: domain.ModelParams{Temperature: &temp, MaxTokens: 500}},
-	}}, "SYSTEM")
+		Model:  domain.Model{ID: 3, Name: "m1", Params: domain.ModelParams{Temperature: &temp, MaxTokens: 500}},
+	}}, "")
 
-	got, err := svc.Summarize(t.Context(), 1, 2)
+	got, err := svc.Summarize(t.Context(), 1, 42, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,20 +89,35 @@ func TestSummarize(t *testing.T) {
 	if strings.Contains(req.Messages[0].Content, "old") {
 		t.Error("prompt contains messages before the start")
 	}
+	if len(usage.got) != 1 || usage.got[0].UserID != 42 || usage.got[0].ModelID != 3 || usage.got[0].Kind != domain.UsageSummary {
+		t.Errorf("usage = %+v", usage.got)
+	}
+}
+
+func TestSummarizeStyle(t *testing.T) {
+	client := &fakeClient{resp: "ok"}
+	svc, _ := newService(fakeHistory{{MessageID: 1, Username: "a", Text: "x"}},
+		fakeModels{llm.Target{Client: client}}, "стихами")
+	if _, err := svc.Summarize(t.Context(), 1, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(client.got.System, "SYSTEM") || !strings.Contains(client.got.System, "стихами") {
+		t.Errorf("system = %q", client.got.System)
+	}
 }
 
 func TestSummarizeNoHistory(t *testing.T) {
-	svc := New(fakeHistory{}, fakeModels{}, "")
-	if _, err := svc.Summarize(t.Context(), 1, 5); !errors.Is(err, ErrNoHistory) {
+	svc, _ := newService(fakeHistory{}, fakeModels{}, "")
+	if _, err := svc.Summarize(t.Context(), 1, 1, 5); !errors.Is(err, ErrNoHistory) {
 		t.Fatalf("err = %v, want ErrNoHistory", err)
 	}
 }
 
 func TestSummarizeLLMError(t *testing.T) {
 	boom := errors.New("boom")
-	svc := New(fakeHistory{{MessageID: 1, Username: "a", Text: "x"}},
+	svc, _ := newService(fakeHistory{{MessageID: 1, Username: "a", Text: "x"}},
 		fakeModels{llm.Target{Client: &fakeClient{err: boom}}}, "")
-	if _, err := svc.Summarize(t.Context(), 1, 1); !errors.Is(err, boom) {
+	if _, err := svc.Summarize(t.Context(), 1, 1, 1); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want wrapped boom", err)
 	}
 }
