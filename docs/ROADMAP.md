@@ -4,7 +4,7 @@ Phase 1 is done: parity with the Python bot, three LLM providers, Rich Markdown.
 
 Phase 2 is done: a Mini App for providers, models and group settings. We dropped it because a Mini App needs a separately hosted public HTTPS site, and we don't want to run one.
 
-Phase 3 is implemented: inline buttons in Telegram itself replace the Mini App. What remains is the manual check at the end of its section.
+Phase 3 is done: inline buttons in Telegram itself replace the Mini App. The plan is kept below for reference.
 
 ## Phase 3 — settings through inline buttons instead of the Mini App
 

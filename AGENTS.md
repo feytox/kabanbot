@@ -3,7 +3,7 @@
 Kabanbot is a Telegram group bot. It caches chat messages and summarizes them with an LLM: `/summary` sent as a reply summarizes everything from that message onward. It also pings everyone on `@all`. Inline-button menus let users connect their own LLM providers and models (in private chat) and configure each group.
 
 **Status:** being rebuilt in Go in phases; see **`docs/ROADMAP.md`** for the detailed plan.
-- Phases 1–2 are done. Phase 3 (inline-button menus instead of the Mini App, so the bot needs no public HTTPS site) is implemented; the manual check from the roadmap is still pending.
+- Phases 1–3 are done. Phase 3 replaced the Mini App (phase 2) with inline-button menus, so the bot needs no public HTTPS site.
 - **Next is phase 4:** chatting with the bot, and a per-chat personality editable via LLM tool calls (admins only).
 
 The old Python bot is tagged `old`.
