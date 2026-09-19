@@ -7,7 +7,3 @@ data/
 *.db
 *.db-shm
 *.db-wal
-
-node_modules/
-web/miniapp/dist/*
-!web/miniapp/dist/.gitkeep

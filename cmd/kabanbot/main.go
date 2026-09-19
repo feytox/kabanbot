@@ -25,9 +25,7 @@ import (
 	"github.com/feytox/kabanbot/internal/secrets"
 	"github.com/feytox/kabanbot/internal/storage/sqlite"
 	"github.com/feytox/kabanbot/internal/telegram"
-	"github.com/feytox/kabanbot/internal/webapi"
 	"github.com/feytox/kabanbot/prompts"
-	"github.com/feytox/kabanbot/web"
 )
 
 func main() {
@@ -59,6 +57,8 @@ func run(ctx context.Context) error {
 		if box, err = secrets.New(key); err != nil {
 			return err
 		}
+	} else {
+		log.Warn("MASTER_KEY is not set: users cannot connect their own models")
 	}
 
 	fallback, err := defaultTarget(ctx, cfg.LLM)
@@ -75,24 +75,17 @@ func run(ctx context.Context) error {
 		return err
 	}
 	bot := telegram.NewBot(tg, telegram.Deps{
-		Ingest:    ingest.New(messages, cfg.CacheSize),
-		Summary:   summary.New(messages, models, prompts.Summary()),
-		Mention:   mention.New(messages, tg, log),
-		Chats:     chats,
-		Allowed:   cfg.IsAllowed,
-		WebAppURL: cfg.WebAppURL,
+		Ingest:   ingest.New(messages, cfg.CacheSize),
+		Summary:  summary.New(messages, models, prompts.Summary()),
+		Mention:  mention.New(messages, tg, log),
+		Chats:    chats,
+		Settings: settings.New(modelStore, chats, tg, models, log),
+		Allowed:  cfg.IsAllowed,
 	}, log)
-
-	settingsSvc := settings.New(modelStore, chats, tg, models, cfg.OwnerID, log)
-	miniApp := web.MiniApp()
-	if cfg.WebAppURL != "" && miniApp == nil {
-		log.Warn("WEBAPP_URL is set but the Mini App was not built into this binary")
-	}
-	api := webapi.New(settingsSvc, cfg.BotToken, miniApp, log)
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return bot.Run(ctx) })
-	g.Go(func() error { return serveHTTP(ctx, cfg.HTTPAddr, db, api) })
+	g.Go(func() error { return serveHealth(ctx, cfg.HTTPAddr, db) })
 	return g.Wait()
 }
 
@@ -117,9 +110,9 @@ func defaultTarget(ctx context.Context, c config.DefaultLLM) (llm.Target, error)
 	return llm.Target{Client: client, Model: domain.Model{Name: c.Model, DisplayName: c.Model}}, nil
 }
 
-func serveHTTP(ctx context.Context, addr string, db *sqlite.DB, app http.Handler) error {
+// serveHealth serves /healthz for container health checks.
+func serveHealth(ctx context.Context, addr string, db *sqlite.DB) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", app)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := db.Ping(r.Context()); err != nil {
 			http.Error(w, "db unavailable", http.StatusServiceUnavailable)

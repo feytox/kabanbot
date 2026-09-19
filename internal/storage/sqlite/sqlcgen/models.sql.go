@@ -10,7 +10,7 @@ import (
 )
 
 const chatSummaryModel = `-- name: ChatSummaryModel :one
-SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.shared, providers.created_at, providers.updated_at
+SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.created_at, providers.updated_at
 FROM chats
 JOIN models ON models.id = chats.summary_model_id
 JOIN providers ON providers.id = models.provider_id
@@ -38,7 +38,6 @@ func (q *Queries) ChatSummaryModel(ctx context.Context, id int64) (ChatSummaryMo
 		&i.Provider.BaseUrl,
 		&i.Provider.ApiKeyEnc,
 		&i.Provider.ApiKeyHint,
-		&i.Provider.Shared,
 		&i.Provider.CreatedAt,
 		&i.Provider.UpdatedAt,
 	)
@@ -98,7 +97,7 @@ func (q *Queries) InsertModel(ctx context.Context, arg InsertModelParams) (int64
 
 const modelOptionByID = `-- name: ModelOptionByID :one
 SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.name AS provider_name, providers.kind AS provider_kind,
-       providers.owner_user_id, providers.shared, coalesce(users.username, '') AS owner_username,
+       providers.owner_user_id, coalesce(users.username, '') AS owner_username,
        coalesce(users.first_name, '') AS owner_first_name
 FROM models
 JOIN providers ON providers.id = models.provider_id
@@ -111,7 +110,6 @@ type ModelOptionByIDRow struct {
 	ProviderName   string
 	ProviderKind   string
 	OwnerUserID    int64
-	Shared         bool
 	OwnerUsername  string
 	OwnerFirstName string
 }
@@ -128,7 +126,6 @@ func (q *Queries) ModelOptionByID(ctx context.Context, id int64) (ModelOptionByI
 		&i.ProviderName,
 		&i.ProviderKind,
 		&i.OwnerUserID,
-		&i.Shared,
 		&i.OwnerUsername,
 		&i.OwnerFirstName,
 	)
@@ -136,7 +133,7 @@ func (q *Queries) ModelOptionByID(ctx context.Context, id int64) (ModelOptionByI
 }
 
 const modelWithProvider = `-- name: ModelWithProvider :one
-SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.shared, providers.created_at, providers.updated_at
+SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.created_at, providers.updated_at
 FROM models
 JOIN providers ON providers.id = models.provider_id
 WHERE models.id = ?
@@ -163,7 +160,6 @@ func (q *Queries) ModelWithProvider(ctx context.Context, id int64) (ModelWithPro
 		&i.Provider.BaseUrl,
 		&i.Provider.ApiKeyEnc,
 		&i.Provider.ApiKeyHint,
-		&i.Provider.Shared,
 		&i.Provider.CreatedAt,
 		&i.Provider.UpdatedAt,
 	)
@@ -229,13 +225,13 @@ func (q *Queries) UpdateModel(ctx context.Context, arg UpdateModelParams) error 
 
 const usableModels = `-- name: UsableModels :many
 SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.name AS provider_name, providers.kind AS provider_kind,
-       providers.owner_user_id, providers.shared, coalesce(users.username, '') AS owner_username,
+       providers.owner_user_id, coalesce(users.username, '') AS owner_username,
        coalesce(users.first_name, '') AS owner_first_name
 FROM models
 JOIN providers ON providers.id = models.provider_id
 LEFT JOIN users ON users.id = providers.owner_user_id
-WHERE providers.owner_user_id = ?1 OR providers.shared
-ORDER BY providers.shared, models.id
+WHERE providers.owner_user_id = ?1
+ORDER BY models.id
 `
 
 type UsableModelsRow struct {
@@ -243,12 +239,11 @@ type UsableModelsRow struct {
 	ProviderName   string
 	ProviderKind   string
 	OwnerUserID    int64
-	Shared         bool
 	OwnerUsername  string
 	OwnerFirstName string
 }
 
-// Models the user may bind to a chat: their own and shared ones.
+// Models the user may bind to a chat: their own.
 func (q *Queries) UsableModels(ctx context.Context, userID int64) ([]UsableModelsRow, error) {
 	rows, err := q.db.QueryContext(ctx, usableModels, userID)
 	if err != nil {
@@ -267,7 +262,6 @@ func (q *Queries) UsableModels(ctx context.Context, userID int64) ([]UsableModel
 			&i.ProviderName,
 			&i.ProviderKind,
 			&i.OwnerUserID,
-			&i.Shared,
 			&i.OwnerUsername,
 			&i.OwnerFirstName,
 		); err != nil {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"slices"
 
 	"github.com/caarlos0/env/v11"
@@ -17,7 +16,7 @@ import (
 // Config is the full application configuration.
 type Config struct {
 	BotToken string `env:"BOT_TOKEN,required,notEmpty"`
-	// OwnerID is the Telegram user ID of the bot owner.
+	// OwnerID is the Telegram user ID of the bot owner, whose providers may reach local servers.
 	OwnerID int64 `env:"OWNER_ID"`
 	// AllowedGroups restricts the bot to these chats. Empty means all chats are allowed.
 	AllowedGroups []int64 `env:"ALLOWED_GROUPS" envSeparator:","`
@@ -28,10 +27,9 @@ type Config struct {
 	// MasterKey is a base64-encoded 32-byte key used to encrypt provider API keys at rest.
 	MasterKey string `env:"MASTER_KEY"`
 
-	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
-	// WebAppURL is the public HTTPS URL where HTTPAddr is reachable. Empty disables the Mini App.
-	WebAppURL string     `env:"WEBAPP_URL"`
-	LogLevel  slog.Level `env:"LOG_LEVEL" envDefault:"info"`
+	// HTTPAddr serves /healthz.
+	HTTPAddr string     `env:"HTTP_ADDR" envDefault:":8080"`
+	LogLevel slog.Level `env:"LOG_LEVEL" envDefault:"info"`
 
 	LLM DefaultLLM `envPrefix:"LLM_"`
 }
@@ -84,11 +82,6 @@ func (c Config) validate() error {
 	}
 	if _, err := c.MasterKeyBytes(); err != nil {
 		errs = append(errs, err)
-	}
-	if c.WebAppURL != "" {
-		if u, err := url.Parse(c.WebAppURL); err != nil || u.Scheme != "https" || u.Host == "" {
-			errs = append(errs, errors.New("WEBAPP_URL must be an https:// URL"))
-		}
 	}
 	return errors.Join(errs...)
 }

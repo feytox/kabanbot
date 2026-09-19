@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -55,7 +58,7 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, e
 
 	resp, err := c.api.Models.GenerateContent(ctx, req.Model, contents, cfg)
 	if err != nil {
-		return llm.Response{}, fmt.Errorf("gemini: generate content: %w", err)
+		return llm.Response{}, wrap(err)
 	}
 	text := resp.Text()
 	if text == "" {
@@ -66,4 +69,39 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, e
 		out.Usage = llm.Usage{InputTokens: int64(u.PromptTokenCount), OutputTokens: int64(u.CandidatesTokenCount)}
 	}
 	return out, nil
+}
+
+const providerName = "Gemini"
+
+// wrap describes an API or network failure as *llm.Error.
+func wrap(err error) error {
+	if apiErr, ok := errors.AsType[genai.APIError](err); ok {
+		return &llm.Error{
+			Provider:   providerName,
+			Status:     apiErr.Code,
+			Message:    apiErr.Message,
+			RetryAfter: retryDelay(apiErr.Details),
+			Err:        err,
+		}
+	}
+	if _, ok := errors.AsType[*url.Error](err); ok {
+		return &llm.Error{Provider: providerName, Err: err}
+	}
+	return fmt.Errorf("gemini: generate content: %w", err)
+}
+
+// retryDelay finds the wait Google suggests in a google.rpc.RetryInfo error detail,
+// which rate-limit errors carry, e.g. {"@type": ".../google.rpc.RetryInfo", "retryDelay": "37s"}.
+func retryDelay(details []map[string]any) time.Duration {
+	for _, d := range details {
+		if t, _ := d["@type"].(string); !strings.HasSuffix(t, "google.rpc.RetryInfo") {
+			continue
+		}
+		if s, ok := d["retryDelay"].(string); ok {
+			if v, err := time.ParseDuration(s); err == nil {
+				return v
+			}
+		}
+	}
+	return 0
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/mymmrac/telego"
@@ -57,16 +56,17 @@ func (b *Bot) replyPlain(ctx context.Context, msg *telego.Message, text string) 
 // notify sends a short service message that only the author of msg can see.
 // It falls back to a regular reply when the author cannot receive ephemeral messages.
 func (b *Bot) notify(ctx context.Context, msg *telego.Message, text string) {
-	b.notifyWithMarkup(ctx, msg, text, nil)
+	b.notifyParams(ctx, msg, tu.Message(msg.Chat.ChatID(), text))
 }
 
-// notifyWithMarkup is notify with an inline keyboard.
-func (b *Bot) notifyWithMarkup(ctx context.Context, msg *telego.Message, text string, markup *telego.InlineKeyboardMarkup) {
-	params := tu.Message(msg.Chat.ChatID(), text).WithMessageThreadID(msg.MessageThreadID)
-	if markup != nil {
-		params.ReplyMarkup = markup
-	}
-	if u := msg.From; u != nil && u.ID != anonymousAdminID && msg.SenderChat == nil {
+// notifyScreen is notify with a menu screen.
+func (b *Bot) notifyScreen(ctx context.Context, msg *telego.Message, s screen) {
+	b.notifyParams(ctx, msg, tu.Message(msg.Chat.ChatID(), s.text).WithParseMode(telego.ModeHTML).WithReplyMarkup(s.markup()))
+}
+
+func (b *Bot) notifyParams(ctx context.Context, msg *telego.Message, params *telego.SendMessageParams) {
+	params.MessageThreadID = msg.MessageThreadID
+	if u, ok := sender(msg); ok {
 		params.EphemeralMessageParameters = &telego.EphemeralMessageParameters{ReceiverUserID: int(u.ID)}
 		_, err := b.api.SendMessage(ctx, params)
 		if err == nil {
@@ -78,23 +78,6 @@ func (b *Bot) notifyWithMarkup(ctx context.Context, msg *telego.Message, text st
 	params.ReplyParameters = &telego.ReplyParameters{MessageID: msg.MessageID, AllowSendingWithoutReply: true}
 	if _, err := b.api.SendMessage(ctx, params); err != nil {
 		b.log.ErrorContext(ctx, "send notice", "chat_id", msg.Chat.ID, "err", err)
-	}
-}
-
-// typing shows the "typing…" status in the chat until ctx is canceled.
-func (b *Bot) typing(ctx context.Context, msg *telego.Message) {
-	params := tu.ChatAction(msg.Chat.ChatID(), telego.ChatActionTyping).WithMessageThreadID(msg.MessageThreadID)
-	t := time.NewTicker(4 * time.Second) // the status lasts about 5 seconds
-	defer t.Stop()
-	for {
-		if err := b.api.SendChatAction(ctx, params); err != nil && ctx.Err() == nil {
-			b.log.DebugContext(ctx, "send chat action", "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
 	}
 }
 

@@ -1,16 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26-alpine AS web
-WORKDIR /web
-COPY web/miniapp/package.json web/miniapp/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
-COPY web/miniapp/ ./
-RUN npm run build
-
 FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY . .
-COPY --from=web /web/dist/ web/miniapp/dist/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kabanbot ./cmd/kabanbot

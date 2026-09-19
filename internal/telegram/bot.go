@@ -4,7 +4,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"html"
 	"log/slog"
@@ -16,7 +15,7 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/feytox/kabanbot/internal/app/summary"
+	"github.com/feytox/kabanbot/internal/app/settings"
 	"github.com/feytox/kabanbot/internal/domain"
 )
 
@@ -50,10 +49,10 @@ type Deps struct {
 	Summary Summarizer
 	Mention Mentioner
 	Chats   Chats
+	// Settings backs the settings menus and makes all their authorization decisions.
+	Settings *settings.Service
 	// Allowed reports whether the bot may operate in the chat.
 	Allowed func(chatID int64) bool
-	// WebAppURL is the Mini App URL. Empty disables the settings UI.
-	WebAppURL string
 }
 
 // Client is a connected Bot API client.
@@ -83,6 +82,8 @@ type Bot struct {
 	log  *slog.Logger
 
 	commands map[string]bool
+	menu     *menu
+	dialogs  dialogs
 	sem      chan struct{}
 	wg       sync.WaitGroup
 
@@ -96,7 +97,8 @@ var (
 		{Command: "settings", Description: "Настройки бота в этом чате", IsEphemeral: true},
 	}
 	privateCommands = []telego.BotCommand{
-		{Command: "settings", Description: "Открыть настройки"},
+		{Command: "settings", Description: "Мои модели и группы"},
+		{Command: "cancel", Description: "Отменить ввод"},
 	}
 )
 
@@ -111,6 +113,7 @@ func NewBot(c *Client, deps Deps, log *slog.Logger) *Bot {
 		deps:     deps,
 		log:      log.With("bot", c.me.Username),
 		commands: commands,
+		menu:     &menu{svc: deps.Settings, botUsername: c.me.Username},
 		sem:      make(chan struct{}, maxConcurrentHandlers),
 	}
 }
@@ -122,7 +125,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 	updates, err := b.api.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
 		Timeout:        30,
-		AllowedUpdates: []string{"message", "my_chat_member"},
+		AllowedUpdates: []string{"message", "callback_query", "my_chat_member"},
 	})
 	if err != nil {
 		return fmt.Errorf("telegram: long polling: %w", err)
@@ -133,6 +136,8 @@ func (b *Bot) Run(ctx context.Context) error {
 		switch {
 		case u.Message != nil:
 			b.onMessage(ctx, u.Message)
+		case u.CallbackQuery != nil:
+			b.spawn(ctx, func(ctx context.Context) { b.handleCallback(ctx, u.CallbackQuery) })
 		case u.MyChatMember != nil:
 			b.onMembership(ctx, u.MyChatMember)
 		}
@@ -142,7 +147,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	return nil
 }
 
-// setup registers commands and the menu button.
+// setup registers commands and resets the menu button.
 func (b *Bot) setup(ctx context.Context) error {
 	for _, c := range []*telego.SetMyCommandsParams{
 		{Commands: groupCommands, Scope: tu.ScopeAllGroupChats()},
@@ -152,17 +157,12 @@ func (b *Bot) setup(ctx context.Context) error {
 			return fmt.Errorf("telegram: set commands: %w", err)
 		}
 	}
-	if b.deps.WebAppURL != "" {
-		err := b.api.SetChatMenuButton(ctx, &telego.SetChatMenuButtonParams{
-			MenuButton: &telego.MenuButtonWebApp{
-				Type:   telego.ButtonTypeWebApp,
-				Text:   "Настройки",
-				WebApp: telego.WebAppInfo{URL: b.deps.WebAppURL},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("telegram: set menu button: %w", err)
-		}
+	// Earlier versions pointed the menu button at a Mini App.
+	err := b.api.SetChatMenuButton(ctx, &telego.SetChatMenuButtonParams{
+		MenuButton: &telego.MenuButtonCommands{Type: telego.ButtonTypeCommands},
+	})
+	if err != nil {
+		return fmt.Errorf("telegram: set menu button: %w", err)
 	}
 	return nil
 }
@@ -247,39 +247,11 @@ func (b *Bot) spawn(ctx context.Context, h func(ctx context.Context)) {
 	b.wg.Go(func() {
 		defer func() { <-b.sem }()
 		// Let handlers finish their reply after shutdown starts, but not forever.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		// A summary may wait out a provider's rate limit, hence the generous timeout.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 		defer cancel()
 		h(ctx)
 	})
-}
-
-func (b *Bot) handleSummary(ctx context.Context, msg *telego.Message) {
-	if s := b.features(ctx, msg.Chat.ID); !s.Enabled || !s.Summary {
-		b.notify(ctx, msg, "Пересказы выключены в настройках этого чата.")
-		return
-	}
-	if msg.ReplyToMessage == nil {
-		b.notify(ctx, msg, "Ответьте командой /summary на сообщение, с которого начать пересказ.")
-		return
-	}
-
-	typingCtx, stopTyping := context.WithCancel(ctx)
-	go b.typing(typingCtx, msg)
-	text, err := b.deps.Summary.Summarize(ctx, msg.Chat.ID, msg.ReplyToMessage.MessageID)
-	stopTyping()
-
-	switch {
-	case errors.Is(err, summary.ErrNoHistory):
-		b.notify(ctx, msg, "Не нашёл сохранённых сообщений начиная с этого. Я вижу только сообщения, отправленные после моего добавления в чат.")
-		return
-	case err != nil:
-		b.log.ErrorContext(ctx, "summarize", "chat_id", msg.Chat.ID, "err", err)
-		b.notify(ctx, msg, "Не получилось сделать пересказ, попробуйте позже.")
-		return
-	}
-	if err := b.replyMarkdown(ctx, msg, text); err != nil {
-		b.log.ErrorContext(ctx, "send summary", "chat_id", msg.Chat.ID, "err", err)
-	}
 }
 
 func (b *Bot) handleMentionAll(ctx context.Context, msg *telego.Message) {

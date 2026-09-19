@@ -2,11 +2,13 @@ package gemini
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/feytox/kabanbot/internal/llm"
 )
@@ -59,5 +61,25 @@ func TestComplete(t *testing.T) {
 	cfg, _ := got["generationConfig"].(map[string]any)
 	if cfg["maxOutputTokens"] != 64.0 || cfg["temperature"] != 0.25 {
 		t.Errorf("generationConfig = %v", cfg)
+	}
+}
+
+func TestCompleteRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED",
+			"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"37s"}]}}`)
+	}))
+	defer srv.Close()
+
+	c, err := New(t.Context(), "key", srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Complete(t.Context(), llm.Request{Model: "gemini-test"})
+	perr, ok := errors.AsType[*llm.Error](err)
+	if !ok || perr.Status != 429 || perr.Message != "Quota exceeded" || perr.RetryAfter != 37*time.Second || !perr.Temporary() {
+		t.Fatalf("err = %#v", err)
 	}
 }

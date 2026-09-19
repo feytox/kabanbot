@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -18,6 +19,8 @@ const OpenRouterBaseURL = "https://openrouter.ai/api/v1"
 
 // Config configures a Client.
 type Config struct {
+	// Name is the provider name shown in errors. Empty means "OpenAI".
+	Name    string
 	APIKey  string
 	BaseURL string
 	// Headers are sent with every request, e.g. OpenRouter attribution headers.
@@ -28,14 +31,16 @@ type Config struct {
 
 // Client is an llm.Client backed by the Chat Completions API.
 type Client struct {
-	api openai.Client
+	api  openai.Client
+	name string
 }
 
 var _ llm.Client = (*Client)(nil)
 
 // New creates a Client.
 func New(cfg Config) *Client {
-	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
+	// Retries are left to llm.Retrying, which does them the same way for every provider.
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey), option.WithMaxRetries(0)}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
@@ -45,7 +50,11 @@ func New(cfg Config) *Client {
 	for k, v := range cfg.Headers {
 		opts = append(opts, option.WithHeader(k, v))
 	}
-	return &Client{api: openai.NewClient(opts...)}
+	name := cfg.Name
+	if name == "" {
+		name = "OpenAI"
+	}
+	return &Client{api: openai.NewClient(opts...), name: name}
 }
 
 // NewOpenRouter creates a Client for OpenRouter. It fills in the OpenRouter base URL and attribution headers.
@@ -53,6 +62,7 @@ func NewOpenRouter(cfg Config) *Client {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = OpenRouterBaseURL
 	}
+	cfg.Name = "OpenRouter"
 	cfg.Headers = map[string]string{
 		"HTTP-Referer": "https://github.com/feytox/kabanbot",
 		"X-Title":      "kabanbot",
@@ -86,7 +96,7 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, e
 
 	resp, err := c.api.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return llm.Response{}, fmt.Errorf("openai: chat completion: %w", err)
+		return llm.Response{}, c.wrap(err)
 	}
 	if len(resp.Choices) == 0 {
 		return llm.Response{}, errors.New("openai: empty response")
@@ -98,4 +108,22 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, e
 			OutputTokens: resp.Usage.CompletionTokens,
 		},
 	}, nil
+}
+
+// wrap describes an API or network failure as *llm.Error.
+func (c *Client) wrap(err error) error {
+	if apiErr, ok := errors.AsType[*openai.Error](err); ok {
+		out := &llm.Error{Provider: c.name, Status: apiErr.StatusCode, Message: apiErr.Message, Err: err}
+		if resp := apiErr.Response; resp != nil {
+			out.RetryAfter = llm.ParseRetryAfter(resp.Header)
+			if out.Message == "" {
+				out.Message = resp.Status
+			}
+		}
+		return out
+	}
+	if _, ok := errors.AsType[*url.Error](err); ok {
+		return &llm.Error{Provider: c.name, Err: err}
+	}
+	return fmt.Errorf("openai: chat completion: %w", err)
 }

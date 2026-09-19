@@ -27,6 +27,9 @@ type ModelStore struct {
 // then providers cannot be created or used.
 func NewModelStore(db *DB, box Crypter) *ModelStore { return &ModelStore{db: db, box: box} }
 
+// CanStoreKeys reports whether a master key is configured, so providers can be saved.
+func (s *ModelStore) CanStoreKeys() bool { return s.box != nil }
+
 // SummaryModel returns the model bound to the chat for summaries, or domain.ErrNotFound.
 func (s *ModelStore) SummaryModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error) {
 	row, err := s.db.q.ChatSummaryModel(ctx, chatID)
@@ -96,7 +99,6 @@ func (s *ModelStore) CreateProvider(ctx context.Context, p domain.Provider) (int
 		BaseUrl:     p.BaseURL,
 		ApiKeyEnc:   s.box.Seal([]byte(p.APIKey.Reveal())),
 		ApiKeyHint:  p.KeyHint,
-		Shared:      p.Shared,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("insert provider: %w", err)
@@ -108,7 +110,7 @@ func (s *ModelStore) CreateProvider(ctx context.Context, p domain.Provider) (int
 func (s *ModelStore) UpdateProvider(ctx context.Context, p domain.Provider) error {
 	if p.APIKey == "" {
 		err := s.db.q.UpdateProvider(ctx, sqlcgen.UpdateProviderParams{
-			ID: p.ID, Name: p.Name, BaseUrl: p.BaseURL, Shared: p.Shared,
+			ID: p.ID, Name: p.Name, BaseUrl: p.BaseURL,
 		})
 		if err != nil {
 			return fmt.Errorf("update provider: %w", err)
@@ -124,7 +126,6 @@ func (s *ModelStore) UpdateProvider(ctx context.Context, p domain.Provider) erro
 		BaseUrl:    p.BaseURL,
 		ApiKeyEnc:  s.box.Seal([]byte(p.APIKey.Reveal())),
 		ApiKeyHint: p.KeyHint,
-		Shared:     p.Shared,
 	})
 	if err != nil {
 		return fmt.Errorf("update provider: %w", err)
@@ -193,7 +194,7 @@ func (s *ModelStore) ModelsByOwner(ctx context.Context, userID int64) ([]domain.
 	return out, nil
 }
 
-// UsableModels lists the models the user may bind to a chat: their own and shared ones.
+// UsableModels lists the models the user may bind to a chat: their own.
 func (s *ModelStore) UsableModels(ctx context.Context, userID int64) ([]domain.ModelOption, error) {
 	rows, err := s.db.q.UsableModels(ctx, userID)
 	if err != nil {
@@ -237,7 +238,6 @@ func toModelOption(r sqlcgen.ModelOptionByIDRow) (domain.ModelOption, error) {
 		ProviderKind: domain.ProviderKind(r.ProviderKind),
 		OwnerID:      r.OwnerUserID,
 		OwnerName:    displayName(r.OwnerUsername, r.OwnerFirstName),
-		Shared:       r.Shared,
 	}, nil
 }
 
@@ -257,7 +257,6 @@ func toProvider(p sqlcgen.Provider) domain.Provider {
 		Name:    p.Name,
 		BaseURL: p.BaseUrl,
 		KeyHint: p.ApiKeyHint,
-		Shared:  p.Shared,
 	}
 }
 

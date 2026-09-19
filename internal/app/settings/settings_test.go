@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	owner   = 1 // bot owner
 	alice   = 2 // admin of the group
 	bob     = 3 // another admin of the group
 	mallory = 4 // not an admin
@@ -52,6 +51,7 @@ func (echoClient) Complete(_ context.Context, req llm.Request) (llm.Response, er
 }
 
 type env struct {
+	admins  fakeAdmins
 	svc     *settings.Service
 	chats   *sqlite.ChatStore
 	clients *fakeClients
@@ -72,20 +72,20 @@ func setup(t *testing.T) env {
 		t.Fatal(err)
 	}
 	clients := &fakeClients{}
-	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {alice, bob}}, clients,
-		owner, slog.New(slog.DiscardHandler))
-	for _, u := range []settings.User{{ID: owner}, {ID: alice, Username: "alice"}, {ID: bob}, {ID: mallory}} {
+	admins := fakeAdmins{group: {alice, bob}}
+	svc := settings.New(sqlite.NewModelStore(db, box), chats, admins, clients, slog.New(slog.DiscardHandler))
+	for _, u := range []settings.User{{ID: alice, Username: "alice"}, {ID: bob}, {ID: mallory}} {
 		if err := svc.Seen(ctx, u); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return env{svc: svc, chats: chats, clients: clients}
+	return env{admins: admins, svc: svc, chats: chats, clients: clients}
 }
 
-func (e env) addModel(t *testing.T, u settings.User, shared bool) (domain.Provider, domain.Model) {
+func (e env) addModel(t *testing.T, u settings.User) (domain.Provider, domain.Model) {
 	t.Helper()
 	p, err := e.svc.CreateProvider(t.Context(), u, settings.ProviderInput{
-		Kind: domain.ProviderOpenRouter, Name: "router", APIKey: "sk-secret-key-1234", Shared: shared,
+		Kind: domain.ProviderOpenRouter, Name: "router", APIKey: "sk-secret-key-1234",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func user(id int64) settings.User { return settings.User{ID: id} }
 
 func TestProvidersNeverExposeKeys(t *testing.T) {
 	e := setup(t)
-	p, _ := e.addModel(t, user(alice), false)
+	p, _ := e.addModel(t, user(alice))
 	if p.APIKey != "" || p.KeyHint != "1234" {
 		t.Fatalf("created provider = %+v", p)
 	}
@@ -120,7 +120,7 @@ func TestProvidersNeverExposeKeys(t *testing.T) {
 func TestOthersCannotTouchProvidersOrModels(t *testing.T) {
 	e := setup(t)
 	ctx := t.Context()
-	p, m := e.addModel(t, user(alice), false)
+	p, m := e.addModel(t, user(alice))
 
 	checks := map[string]error{}
 	_, checks["update provider"] = e.svc.UpdateProvider(ctx, user(bob), p.ID, settings.ProviderInput{Name: "x"})
@@ -139,7 +139,7 @@ func TestOthersCannotTouchProvidersOrModels(t *testing.T) {
 
 func TestChangingBaseURLRequiresKey(t *testing.T) {
 	e := setup(t)
-	p, _ := e.addModel(t, user(alice), false)
+	p, _ := e.addModel(t, user(alice))
 
 	_, err := e.svc.UpdateProvider(t.Context(), user(alice), p.ID, settings.ProviderInput{
 		Name: "router", BaseURL: "https://evil.example/v1",
@@ -162,23 +162,11 @@ func TestChangingBaseURLRequiresKey(t *testing.T) {
 	}
 }
 
-func TestOnlyOwnerShares(t *testing.T) {
-	e := setup(t)
-	_, err := e.svc.CreateProvider(t.Context(), user(alice), settings.ProviderInput{
-		Kind: domain.ProviderGemini, Name: "g", APIKey: "key-key-key", Shared: true,
-	})
-	if _, ok := errors.AsType[*settings.ValidationError](err); !ok {
-		t.Fatalf("alice sharing: err = %v", err)
-	}
-	e.addModel(t, user(owner), true)
-}
-
 func TestChatAccessAndBinding(t *testing.T) {
 	e := setup(t)
 	ctx := t.Context()
-	_, aliceModel := e.addModel(t, user(alice), false)
-	_, bobModel := e.addModel(t, user(bob), false)
-	_, sharedModel := e.addModel(t, user(owner), true)
+	_, aliceModel := e.addModel(t, user(alice))
+	_, bobModel := e.addModel(t, user(bob))
 
 	if chats, _ := e.svc.Chats(ctx, user(mallory)); len(chats) != 0 {
 		t.Fatalf("non-admin sees chats: %+v", chats)
@@ -213,32 +201,31 @@ func TestChatAccessAndBinding(t *testing.T) {
 	if _, err := bind(user(bob), &aliceModel.ID); !isValidation(err) {
 		t.Fatalf("bob binding alice's model: err = %v, want ValidationError", err)
 	}
-	if _, err := bind(user(bob), &sharedModel.ID); err != nil {
-		t.Fatalf("binding shared model: %v", err)
-	}
 	if _, err := bind(user(mallory), nil); !errors.Is(err, settings.ErrForbidden) {
 		t.Fatalf("non-admin update: err = %v", err)
 	}
 }
 
-func TestOwnerCanUnbindModelAnywhere(t *testing.T) {
+func TestModelOwnerCanUnbindAnywhere(t *testing.T) {
 	e := setup(t)
 	ctx := t.Context()
-	_, m := e.addModel(t, user(owner), true)
+	_, m := e.addModel(t, user(alice))
 	if _, err := e.svc.UpdateChat(ctx, user(alice), group, settings.ChatInput{
 		Settings: domain.DefaultChatSettings(), SummaryModelID: &m.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Alice stops being an admin but may still take her model back.
+	e.admins[group] = []int64{bob}
 
-	views, _ := e.svc.Providers(ctx, user(owner))
+	views, _ := e.svc.Providers(ctx, user(alice))
 	if chats := views[0].Models[0].Chats; len(chats) != 1 || chats[0].Title != "Кабаны" {
 		t.Fatalf("bound chats = %+v", chats)
 	}
-	if err := e.svc.UnbindModel(ctx, user(owner), m.ID, group); err != nil {
+	if err := e.svc.UnbindModel(ctx, user(alice), m.ID, group); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ := e.svc.Chat(ctx, user(alice), group); c.SummaryModelID != nil {
+	if c, _ := e.svc.Chat(ctx, user(bob), group); c.SummaryModelID != nil {
 		t.Fatalf("still bound: %+v", c)
 	}
 }
@@ -246,7 +233,7 @@ func TestOwnerCanUnbindModelAnywhere(t *testing.T) {
 func TestDeletingModelFallsBackToDefault(t *testing.T) {
 	e := setup(t)
 	ctx := t.Context()
-	_, m := e.addModel(t, user(alice), false)
+	_, m := e.addModel(t, user(alice))
 	if _, err := e.svc.UpdateChat(ctx, user(alice), group, settings.ChatInput{
 		Settings: domain.DefaultChatSettings(), SummaryModelID: &m.ID,
 	}); err != nil {
@@ -262,7 +249,7 @@ func TestDeletingModelFallsBackToDefault(t *testing.T) {
 
 func TestTestModelUsesDecryptedKey(t *testing.T) {
 	e := setup(t)
-	_, m := e.addModel(t, user(alice), false)
+	_, m := e.addModel(t, user(alice))
 	reply, _, err := e.svc.TestModel(t.Context(), user(alice), m.ID)
 	if err != nil {
 		t.Fatal(err)

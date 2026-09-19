@@ -1,5 +1,5 @@
 // Package settings manages LLM providers, models, and per-chat settings on behalf of users.
-// All authorization decisions of the Mini App live here.
+// All authorization decisions of the settings UI live here.
 package settings
 
 import (
@@ -49,6 +49,9 @@ type Models interface {
 	CreateModel(ctx context.Context, m domain.Model) (int64, error)
 	UpdateModel(ctx context.Context, m domain.Model) error
 	DeleteModel(ctx context.Context, id int64) error
+
+	// CanStoreKeys reports whether API keys can be encrypted, i.e. MASTER_KEY is set.
+	CanStoreKeys() bool
 }
 
 // Chats persists chats and users.
@@ -72,30 +75,29 @@ type Clients interface {
 	Invalidate(providerID int64)
 }
 
-// User is the authenticated Mini App user.
+// User is the Telegram user acting in the settings UI.
 type User struct {
 	ID        int64
 	Username  string
 	FirstName string
 }
 
-// Service implements the Mini App use cases.
+// Service implements the settings use cases.
 type Service struct {
 	models  Models
 	chats   Chats
 	admins  Admins
 	clients Clients
-	ownerID int64
 	log     *slog.Logger
 }
 
-// New creates a Service. ownerID is the bot owner, who alone may share providers with everyone.
-func New(models Models, chats Chats, admins Admins, clients Clients, ownerID int64, log *slog.Logger) *Service {
-	return &Service{models: models, chats: chats, admins: admins, clients: clients, ownerID: ownerID, log: log}
+// New creates a Service.
+func New(models Models, chats Chats, admins Admins, clients Clients, log *slog.Logger) *Service {
+	return &Service{models: models, chats: chats, admins: admins, clients: clients, log: log}
 }
 
-// IsOwner reports whether u is the bot owner.
-func (s *Service) IsOwner(u User) bool { return s.ownerID != 0 && u.ID == s.ownerID }
+// CanStoreKeys reports whether providers can be saved, which needs MASTER_KEY.
+func (s *Service) CanStoreKeys() bool { return s.models.CanStoreKeys() }
 
 // Seen records the user's current names so others see who owns a model.
 func (s *Service) Seen(ctx context.Context, u User) error {
@@ -158,12 +160,11 @@ type ProviderInput struct {
 	BaseURL string
 	// APIKey is required on creation. On update, empty keeps the stored key.
 	APIKey string
-	Shared bool
 }
 
 // CreateProvider adds a provider owned by the user.
 func (s *Service) CreateProvider(ctx context.Context, u User, in ProviderInput) (domain.Provider, error) {
-	if err := s.validateProvider(u, in, true); err != nil {
+	if err := validateProvider(in, true); err != nil {
 		return domain.Provider{}, err
 	}
 	p := domain.Provider{
@@ -173,7 +174,6 @@ func (s *Service) CreateProvider(ctx context.Context, u User, in ProviderInput) 
 		BaseURL: strings.TrimSpace(in.BaseURL),
 		APIKey:  domain.Secret(in.APIKey),
 		KeyHint: domain.KeyHint(in.APIKey),
-		Shared:  in.Shared,
 	}
 	id, err := s.models.CreateProvider(ctx, p)
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Service) UpdateProvider(ctx context.Context, u User, id int64, in Provi
 		return domain.Provider{}, err
 	}
 	in.Kind = p.Kind
-	if err := s.validateProvider(u, in, false); err != nil {
+	if err := validateProvider(in, false); err != nil {
 		return domain.Provider{}, err
 	}
 	baseURL := strings.TrimSpace(in.BaseURL)
@@ -199,7 +199,7 @@ func (s *Service) UpdateProvider(ctx context.Context, u User, id int64, in Provi
 		return domain.Provider{}, invalid("При смене адреса API нужно заново ввести ключ")
 	}
 
-	p.Name, p.BaseURL, p.Shared = strings.TrimSpace(in.Name), baseURL, in.Shared
+	p.Name, p.BaseURL = strings.TrimSpace(in.Name), baseURL
 	p.APIKey = domain.Secret(in.APIKey)
 	if in.APIKey != "" {
 		p.KeyHint = domain.KeyHint(in.APIKey)
@@ -224,27 +224,52 @@ func (s *Service) DeleteProvider(ctx context.Context, u User, id int64) error {
 	return nil
 }
 
-func (s *Service) validateProvider(u User, in ProviderInput, creating bool) error {
+func validateProvider(in ProviderInput, creating bool) error {
 	if !in.Kind.Valid() {
 		return invalid("Неизвестный тип провайдера")
 	}
-	if n := utf8.RuneCountInString(strings.TrimSpace(in.Name)); n == 0 || n > 64 {
-		return invalid("Название должно быть от 1 до 64 символов")
+	if err := ValidateProviderName(in.Name); err != nil {
+		return err
 	}
-	if creating && strings.TrimSpace(in.APIKey) == "" {
-		return invalid("Нужен API-ключ")
-	}
-	if len(in.APIKey) > 1024 {
-		return invalid("Слишком длинный API-ключ")
-	}
-	if raw := strings.TrimSpace(in.BaseURL); raw != "" {
-		u, err := url.Parse(raw)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
-			return invalid("Адрес API должен быть ссылкой вида https://host/path")
+	if creating || in.APIKey != "" {
+		if err := ValidateAPIKey(in.APIKey); err != nil {
+			return err
 		}
 	}
-	if in.Shared && !s.IsOwner(u) {
-		return invalid("Делиться провайдером со всеми может только владелец бота")
+	return ValidateBaseURL(in.BaseURL)
+}
+
+// The Validate* functions check single fields, so a UI asking for them one at a time
+// can reject bad input right away. The Service methods check them again.
+
+// ValidateProviderName checks a provider name.
+func ValidateProviderName(name string) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(name)); n == 0 || n > 64 {
+		return invalid("Название должно быть от 1 до 64 символов")
+	}
+	return nil
+}
+
+// ValidateAPIKey checks a non-optional API key.
+func ValidateAPIKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return invalid("Нужен API-ключ")
+	}
+	if len(key) > 1024 {
+		return invalid("Слишком длинный API-ключ")
+	}
+	return nil
+}
+
+// ValidateBaseURL checks a provider API address. Empty means the provider's default.
+func ValidateBaseURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
+		return invalid("Адрес API должен быть ссылкой вида https://host/path")
 	}
 	return nil
 }
@@ -360,23 +385,53 @@ func (s *Service) ownModel(ctx context.Context, u User, id int64) (domain.Model,
 
 func modelFromInput(in ModelInput) (domain.Model, error) {
 	name := strings.TrimSpace(in.Name)
-	if n := utf8.RuneCountInString(name); n == 0 || n > 128 {
-		return domain.Model{}, invalid("ID модели должен быть от 1 до 128 символов")
-	}
 	display := strings.TrimSpace(in.DisplayName)
 	if display == "" {
 		display = name
 	}
-	if utf8.RuneCountInString(display) > 64 {
-		return domain.Model{}, invalid("Название модели должно быть не длиннее 64 символов")
-	}
-	if t := in.Params.Temperature; t != nil && (*t < 0 || *t > 2) {
-		return domain.Model{}, invalid("Temperature должна быть от 0 до 2")
-	}
-	if in.Params.MaxTokens < 0 || in.Params.MaxTokens > 1_000_000 {
-		return domain.Model{}, invalid("Лимит токенов должен быть от 0 до 1 000 000")
+	for _, err := range []error{
+		ValidateModelName(name),
+		ValidateModelDisplayName(display),
+		ValidateTemperature(in.Params.Temperature),
+		ValidateMaxTokens(in.Params.MaxTokens),
+	} {
+		if err != nil {
+			return domain.Model{}, err
+		}
 	}
 	return domain.Model{Name: name, DisplayName: display, Params: in.Params}, nil
+}
+
+// ValidateModelName checks a model ID as the provider knows it.
+func ValidateModelName(name string) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(name)); n == 0 || n > 128 {
+		return invalid("ID модели должен быть от 1 до 128 символов")
+	}
+	return nil
+}
+
+// ValidateModelDisplayName checks a model's display name. Empty means the model ID.
+func ValidateModelDisplayName(name string) error {
+	if utf8.RuneCountInString(strings.TrimSpace(name)) > 64 {
+		return invalid("Название модели должно быть не длиннее 64 символов")
+	}
+	return nil
+}
+
+// ValidateTemperature checks a temperature. Nil means the provider's default.
+func ValidateTemperature(t *float64) error {
+	if t != nil && (*t < 0 || *t > 2) {
+		return invalid("Temperature должна быть от 0 до 2")
+	}
+	return nil
+}
+
+// ValidateMaxTokens checks a response token limit. Zero means no limit.
+func ValidateMaxTokens(n int64) error {
+	if n < 0 || n > 1_000_000 {
+		return invalid("Лимит токенов должен быть от 0 до 1 000 000")
+	}
+	return nil
 }
 
 // ChatView is a chat as its admins see it.
@@ -428,7 +483,7 @@ type ChatInput struct {
 }
 
 // UpdateChat changes a chat's settings. The user must be a chat admin, and a newly bound
-// model must be one the user may use. Keeping a model someone else bound is allowed.
+// model must be the user's own. Keeping a model someone else bound is allowed.
 func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput) (ChatView, error) {
 	c, err := s.adminChat(ctx, u, id)
 	if err != nil {
@@ -440,7 +495,7 @@ func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput
 			return ChatView{}, err
 		}
 		if !slices.ContainsFunc(usable, func(o domain.ModelOption) bool { return o.ID == *m }) {
-			return ChatView{}, invalid("Эту модель нельзя подключить: она не ваша и не общая")
+			return ChatView{}, invalid("Подключить можно только свою модель")
 		}
 	}
 	c.Settings, c.SummaryModelID = in.Settings, in.SummaryModelID

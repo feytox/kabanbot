@@ -19,7 +19,7 @@ func (q *Queries) DeleteProvider(ctx context.Context, id int64) error {
 }
 
 const getProvider = `-- name: GetProvider :one
-SELECT id, owner_user_id, kind, name, base_url, api_key_enc, api_key_hint, shared, created_at, updated_at FROM providers WHERE id = ?
+SELECT id, owner_user_id, kind, name, base_url, api_key_enc, api_key_hint, created_at, updated_at FROM providers WHERE id = ?
 `
 
 func (q *Queries) GetProvider(ctx context.Context, id int64) (Provider, error) {
@@ -33,7 +33,6 @@ func (q *Queries) GetProvider(ctx context.Context, id int64) (Provider, error) {
 		&i.BaseUrl,
 		&i.ApiKeyEnc,
 		&i.ApiKeyHint,
-		&i.Shared,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -41,8 +40,8 @@ func (q *Queries) GetProvider(ctx context.Context, id int64) (Provider, error) {
 }
 
 const insertProvider = `-- name: InsertProvider :one
-INSERT INTO providers (owner_user_id, kind, name, base_url, api_key_enc, api_key_hint, shared)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO providers (owner_user_id, kind, name, base_url, api_key_enc, api_key_hint)
+VALUES (?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -53,7 +52,6 @@ type InsertProviderParams struct {
 	BaseUrl     string
 	ApiKeyEnc   []byte
 	ApiKeyHint  string
-	Shared      bool
 }
 
 func (q *Queries) InsertProvider(ctx context.Context, arg InsertProviderParams) (int64, error) {
@@ -64,7 +62,6 @@ func (q *Queries) InsertProvider(ctx context.Context, arg InsertProviderParams) 
 		arg.BaseUrl,
 		arg.ApiKeyEnc,
 		arg.ApiKeyHint,
-		arg.Shared,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -72,7 +69,7 @@ func (q *Queries) InsertProvider(ctx context.Context, arg InsertProviderParams) 
 }
 
 const providersByOwner = `-- name: ProvidersByOwner :many
-SELECT id, owner_user_id, kind, name, base_url, api_key_enc, api_key_hint, shared, created_at, updated_at FROM providers WHERE owner_user_id = ? ORDER BY id
+SELECT id, owner_user_id, kind, name, base_url, api_key_enc, api_key_hint, created_at, updated_at FROM providers WHERE owner_user_id = ? ORDER BY id
 `
 
 func (q *Queries) ProvidersByOwner(ctx context.Context, ownerUserID int64) ([]Provider, error) {
@@ -92,7 +89,6 @@ func (q *Queries) ProvidersByOwner(ctx context.Context, ownerUserID int64) ([]Pr
 			&i.BaseUrl,
 			&i.ApiKeyEnc,
 			&i.ApiKeyHint,
-			&i.Shared,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -111,30 +107,24 @@ func (q *Queries) ProvidersByOwner(ctx context.Context, ownerUserID int64) ([]Pr
 
 const updateProvider = `-- name: UpdateProvider :exec
 UPDATE providers
-SET name = ?, base_url = ?, shared = ?, updated_at = unixepoch()
+SET name = ?, base_url = ?, updated_at = unixepoch()
 WHERE id = ?
 `
 
 type UpdateProviderParams struct {
 	Name    string
 	BaseUrl string
-	Shared  bool
 	ID      int64
 }
 
 func (q *Queries) UpdateProvider(ctx context.Context, arg UpdateProviderParams) error {
-	_, err := q.db.ExecContext(ctx, updateProvider,
-		arg.Name,
-		arg.BaseUrl,
-		arg.Shared,
-		arg.ID,
-	)
+	_, err := q.db.ExecContext(ctx, updateProvider, arg.Name, arg.BaseUrl, arg.ID)
 	return err
 }
 
 const updateProviderKey = `-- name: UpdateProviderKey :exec
 UPDATE providers
-SET name = ?, base_url = ?, api_key_enc = ?, api_key_hint = ?, shared = ?, updated_at = unixepoch()
+SET name = ?, base_url = ?, api_key_enc = ?, api_key_hint = ?, updated_at = unixepoch()
 WHERE id = ?
 `
 
@@ -143,7 +133,6 @@ type UpdateProviderKeyParams struct {
 	BaseUrl    string
 	ApiKeyEnc  []byte
 	ApiKeyHint string
-	Shared     bool
 	ID         int64
 }
 
@@ -153,7 +142,6 @@ func (q *Queries) UpdateProviderKey(ctx context.Context, arg UpdateProviderKeyPa
 		arg.BaseUrl,
 		arg.ApiKeyEnc,
 		arg.ApiKeyHint,
-		arg.Shared,
 		arg.ID,
 	)
 	return err

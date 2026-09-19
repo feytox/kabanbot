@@ -87,17 +87,24 @@ func (r *Registry) Invalidate(providerID int64) {
 	delete(r.clients, providerID)
 }
 
-// NewClient creates an llm.Client for the provider. httpClient may be nil to use the default.
+// NewClient creates an llm.Client for the provider that retries rate limits and server errors.
+// httpClient may be nil to use the default.
 func NewClient(ctx context.Context, p domain.Provider, httpClient *http.Client) (llm.Client, error) {
 	cfg := openai.Config{APIKey: p.APIKey.Reveal(), BaseURL: p.BaseURL, HTTPClient: httpClient}
+	var c llm.Client
 	switch p.Kind {
 	case domain.ProviderOpenAI:
-		return openai.New(cfg), nil
+		c = openai.New(cfg)
 	case domain.ProviderOpenRouter:
-		return openai.NewOpenRouter(cfg), nil
+		c = openai.NewOpenRouter(cfg)
 	case domain.ProviderGemini:
-		return gemini.New(ctx, p.APIKey.Reveal(), p.BaseURL, httpClient)
+		g, err := gemini.New(ctx, p.APIKey.Reveal(), p.BaseURL, httpClient)
+		if err != nil {
+			return nil, err
+		}
+		c = g
 	default:
 		return nil, fmt.Errorf("unknown provider kind %q", p.Kind)
 	}
+	return llm.WithRetry(c), nil
 }

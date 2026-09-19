@@ -2,10 +2,12 @@ package openai
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/feytox/kabanbot/internal/llm"
 )
@@ -70,7 +72,29 @@ func TestCompleteHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := New(Config{APIKey: "bad", BaseURL: srv.URL})
-	if _, err := c.Complete(t.Context(), llm.Request{Model: "m"}); err == nil {
-		t.Fatal("want error")
+	_, err := c.Complete(t.Context(), llm.Request{Model: "m"})
+	perr, ok := errors.AsType[*llm.Error](err)
+	if !ok || perr.Status != http.StatusUnauthorized || perr.Message != "bad key" || perr.Temporary() {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestCompleteRateLimitIsNotRetriedBySDK(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "7")
+		http.Error(w, `{"error":{"message":"slow down"}}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := NewOpenRouter(Config{APIKey: "k", BaseURL: srv.URL})
+	_, err := c.Complete(t.Context(), llm.Request{Model: "m"})
+	perr, ok := errors.AsType[*llm.Error](err)
+	if !ok || perr.Provider != "OpenRouter" || perr.RetryAfter != 7*time.Second || !perr.Temporary() {
+		t.Fatalf("err = %#v", err)
+	}
+	if calls != 1 {
+		t.Errorf("the SDK made %d calls; retries belong to llm.Retrying", calls)
 	}
 }

@@ -49,7 +49,6 @@ type Provider struct {
 	BaseUrl     string
 	ApiKeyEnc   []byte
 	ApiKeyHint  string
-	Shared      bool
 	CreatedAt   int64
 	UpdatedAt   int64
 }

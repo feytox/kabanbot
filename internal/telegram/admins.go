@@ -22,7 +22,7 @@ type adminEntry struct {
 	expires time.Time
 }
 
-// adminCache remembers getChatMember results, since the Mini App checks them on every request.
+// adminCache remembers getChatMember results, since settings menus check them on every button press.
 type adminCache struct {
 	mu      sync.Mutex
 	entries map[adminKey]adminEntry

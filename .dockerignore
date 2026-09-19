@@ -4,5 +4,3 @@
 bin
 data
 *.db
-web/miniapp/node_modules
-web/miniapp/dist
