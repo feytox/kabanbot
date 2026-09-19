@@ -18,6 +18,13 @@ SELECT * FROM messages
 WHERE chat_id = ? AND message_id >= ?
 ORDER BY message_id;
 
+-- name: RecentMessages :many
+-- The newest messages of the chat, newest first.
+SELECT * FROM messages
+WHERE chat_id = ?
+ORDER BY message_id DESC
+LIMIT ?;
+
 -- name: ChatUsers :many
 -- Every human who wrote in the chat. SQLite takes the bare username column
 -- from the row holding max(message_id), i.e. the latest known name.

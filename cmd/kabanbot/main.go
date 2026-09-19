@@ -73,7 +73,7 @@ func run(ctx context.Context) error {
 		Summary:  summary.New(messages, models, prompts.Summary()),
 		Mention:  mention.New(messages, tg, log),
 		Chats:    chats,
-		Settings: settings.New(modelStore, chats, tg, models, cfg.OwnerID, log),
+		Settings: settings.New(modelStore, chats, tg, models, sqlite.NewUsageStore(db), cfg.OwnerID, log),
 		Allowed:  cfg.IsAllowed,
 	}, log)
 

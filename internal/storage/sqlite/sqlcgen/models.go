@@ -19,6 +19,18 @@ type Chat struct {
 	UpdatedBy      sql.NullInt64
 	UpdatedAt      int64
 	Member         bool
+	SummaryStyle   string
+}
+
+type LlmUsage struct {
+	ID        int64
+	ChatID    int64
+	UserID    int64
+	ModelID   sql.NullInt64
+	Kind      string
+	TokensIn  int64
+	TokensOut int64
+	CreatedAt int64
 }
 
 type Message struct {
@@ -39,6 +51,15 @@ type Model struct {
 	ModelName   string
 	DisplayName string
 	ParamsJson  string
+}
+
+type PersonalityHistory struct {
+	ID        int64
+	ChatID    int64
+	Text      string
+	ChangedBy int64
+	Via       string
+	CreatedAt int64
 }
 
 type Provider struct {

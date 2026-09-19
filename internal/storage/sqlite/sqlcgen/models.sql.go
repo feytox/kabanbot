@@ -9,6 +9,43 @@ import (
 	"context"
 )
 
+const chatChatModel = `-- name: ChatChatModel :one
+SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.created_at, providers.updated_at, providers.shared
+FROM chats
+JOIN models ON models.id = coalesce(chats.chat_model_id, chats.summary_model_id)
+JOIN providers ON providers.id = models.provider_id
+WHERE chats.id = ?
+`
+
+type ChatChatModelRow struct {
+	Model    Model
+	Provider Provider
+}
+
+// The model a chat talks with: its chat model, or else its summary model.
+func (q *Queries) ChatChatModel(ctx context.Context, id int64) (ChatChatModelRow, error) {
+	row := q.db.QueryRowContext(ctx, chatChatModel, id)
+	var i ChatChatModelRow
+	err := row.Scan(
+		&i.Model.ID,
+		&i.Model.ProviderID,
+		&i.Model.ModelName,
+		&i.Model.DisplayName,
+		&i.Model.ParamsJson,
+		&i.Provider.ID,
+		&i.Provider.OwnerUserID,
+		&i.Provider.Kind,
+		&i.Provider.Name,
+		&i.Provider.BaseUrl,
+		&i.Provider.ApiKeyEnc,
+		&i.Provider.ApiKeyHint,
+		&i.Provider.CreatedAt,
+		&i.Provider.UpdatedAt,
+		&i.Provider.Shared,
+	)
+	return i, err
+}
+
 const chatSummaryModel = `-- name: ChatSummaryModel :one
 SELECT models.id, models.provider_id, models.model_name, models.display_name, models.params_json, providers.id, providers.owner_user_id, providers.kind, providers.name, providers.base_url, providers.api_key_enc, providers.api_key_hint, providers.created_at, providers.updated_at, providers.shared
 FROM chats

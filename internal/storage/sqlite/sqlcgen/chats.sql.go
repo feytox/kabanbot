@@ -10,12 +10,13 @@ import (
 	"database/sql"
 )
 
-const chatsBySummaryModel = `-- name: ChatsBySummaryModel :many
-SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member FROM chats WHERE summary_model_id = ? ORDER BY title
+const chatsByModel = `-- name: ChatsByModel :many
+SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member, summary_style FROM chats WHERE summary_model_id = ?1 OR chat_model_id = ?1 ORDER BY title
 `
 
-func (q *Queries) ChatsBySummaryModel(ctx context.Context, summaryModelID sql.NullInt64) ([]Chat, error) {
-	rows, err := q.db.QueryContext(ctx, chatsBySummaryModel, summaryModelID)
+// Chats that use the model for summaries or for chatting.
+func (q *Queries) ChatsByModel(ctx context.Context, modelID sql.NullInt64) ([]Chat, error) {
+	rows, err := q.db.QueryContext(ctx, chatsByModel, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +35,7 @@ func (q *Queries) ChatsBySummaryModel(ctx context.Context, summaryModelID sql.Nu
 			&i.UpdatedBy,
 			&i.UpdatedAt,
 			&i.Member,
+			&i.SummaryStyle,
 		); err != nil {
 			return nil, err
 		}
@@ -49,7 +51,7 @@ func (q *Queries) ChatsBySummaryModel(ctx context.Context, summaryModelID sql.Nu
 }
 
 const getChat = `-- name: GetChat :one
-SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member FROM chats WHERE id = ?
+SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member, summary_style FROM chats WHERE id = ?
 `
 
 func (q *Queries) GetChat(ctx context.Context, id int64) (Chat, error) {
@@ -66,12 +68,52 @@ func (q *Queries) GetChat(ctx context.Context, id int64) (Chat, error) {
 		&i.UpdatedBy,
 		&i.UpdatedAt,
 		&i.Member,
+		&i.SummaryStyle,
 	)
 	return i, err
 }
 
+const getPersonalityChange = `-- name: GetPersonalityChange :one
+SELECT id, chat_id, text, changed_by, via, created_at FROM personality_history WHERE id = ?
+`
+
+func (q *Queries) GetPersonalityChange(ctx context.Context, id int64) (PersonalityHistory, error) {
+	row := q.db.QueryRowContext(ctx, getPersonalityChange, id)
+	var i PersonalityHistory
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.Text,
+		&i.ChangedBy,
+		&i.Via,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertPersonalityChange = `-- name: InsertPersonalityChange :exec
+INSERT INTO personality_history (chat_id, text, changed_by, via) VALUES (?, ?, ?, ?)
+`
+
+type InsertPersonalityChangeParams struct {
+	ChatID    int64
+	Text      string
+	ChangedBy int64
+	Via       string
+}
+
+func (q *Queries) InsertPersonalityChange(ctx context.Context, arg InsertPersonalityChangeParams) error {
+	_, err := q.db.ExecContext(ctx, insertPersonalityChange,
+		arg.ChatID,
+		arg.Text,
+		arg.ChangedBy,
+		arg.Via,
+	)
+	return err
+}
+
 const memberChats = `-- name: MemberChats :many
-SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member FROM chats WHERE member ORDER BY title
+SELECT id, title, enabled, summary_model_id, chat_model_id, personality, settings_json, updated_by, updated_at, member, summary_style FROM chats WHERE member ORDER BY title
 `
 
 func (q *Queries) MemberChats(ctx context.Context) ([]Chat, error) {
@@ -94,6 +136,7 @@ func (q *Queries) MemberChats(ctx context.Context) ([]Chat, error) {
 			&i.UpdatedBy,
 			&i.UpdatedAt,
 			&i.Member,
+			&i.SummaryStyle,
 		); err != nil {
 			return nil, err
 		}
@@ -106,6 +149,93 @@ func (q *Queries) MemberChats(ctx context.Context) ([]Chat, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const personalityHistory = `-- name: PersonalityHistory :many
+SELECT personality_history.id, personality_history.chat_id, personality_history.text, personality_history.changed_by, personality_history.via, personality_history.created_at, coalesce(users.username, '') AS username, coalesce(users.first_name, '') AS first_name
+FROM personality_history
+LEFT JOIN users ON users.id = personality_history.changed_by
+WHERE chat_id = ?
+ORDER BY personality_history.id DESC
+LIMIT ?
+`
+
+type PersonalityHistoryParams struct {
+	ChatID int64
+	Limit  int64
+}
+
+type PersonalityHistoryRow struct {
+	ID        int64
+	ChatID    int64
+	Text      string
+	ChangedBy int64
+	Via       string
+	CreatedAt int64
+	Username  string
+	FirstName string
+}
+
+func (q *Queries) PersonalityHistory(ctx context.Context, arg PersonalityHistoryParams) ([]PersonalityHistoryRow, error) {
+	rows, err := q.db.QueryContext(ctx, personalityHistory, arg.ChatID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PersonalityHistoryRow
+	for rows.Next() {
+		var i PersonalityHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.Text,
+			&i.ChangedBy,
+			&i.Via,
+			&i.CreatedAt,
+			&i.Username,
+			&i.FirstName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setPersonality = `-- name: SetPersonality :exec
+UPDATE chats SET personality = ?, updated_by = ?, updated_at = unixepoch() WHERE id = ?
+`
+
+type SetPersonalityParams struct {
+	Personality string
+	UpdatedBy   sql.NullInt64
+	ID          int64
+}
+
+func (q *Queries) SetPersonality(ctx context.Context, arg SetPersonalityParams) error {
+	_, err := q.db.ExecContext(ctx, setPersonality, arg.Personality, arg.UpdatedBy, arg.ID)
+	return err
+}
+
+const setSummaryStyle = `-- name: SetSummaryStyle :exec
+UPDATE chats SET summary_style = ?, updated_by = ?, updated_at = unixepoch() WHERE id = ?
+`
+
+type SetSummaryStyleParams struct {
+	SummaryStyle string
+	UpdatedBy    sql.NullInt64
+	ID           int64
+}
+
+func (q *Queries) SetSummaryStyle(ctx context.Context, arg SetSummaryStyleParams) error {
+	_, err := q.db.ExecContext(ctx, setSummaryStyle, arg.SummaryStyle, arg.UpdatedBy, arg.ID)
+	return err
 }
 
 const touchChat = `-- name: TouchChat :exec
@@ -125,24 +255,27 @@ func (q *Queries) TouchChat(ctx context.Context, arg TouchChatParams) error {
 	return err
 }
 
-const unbindSummaryModel = `-- name: UnbindSummaryModel :exec
-UPDATE chats SET summary_model_id = NULL, updated_at = unixepoch()
-WHERE id = ? AND summary_model_id = ?
+const unbindModel = `-- name: UnbindModel :exec
+UPDATE chats
+SET summary_model_id = CASE WHEN summary_model_id = ?1 THEN NULL ELSE summary_model_id END,
+    chat_model_id = CASE WHEN chat_model_id = ?1 THEN NULL ELSE chat_model_id END,
+    updated_at = unixepoch()
+WHERE id = ?2
 `
 
-type UnbindSummaryModelParams struct {
-	ID             int64
-	SummaryModelID sql.NullInt64
+type UnbindModelParams struct {
+	ModelID sql.NullInt64
+	ChatID  int64
 }
 
-func (q *Queries) UnbindSummaryModel(ctx context.Context, arg UnbindSummaryModelParams) error {
-	_, err := q.db.ExecContext(ctx, unbindSummaryModel, arg.ID, arg.SummaryModelID)
+func (q *Queries) UnbindModel(ctx context.Context, arg UnbindModelParams) error {
+	_, err := q.db.ExecContext(ctx, unbindModel, arg.ModelID, arg.ChatID)
 	return err
 }
 
 const updateChatSettings = `-- name: UpdateChatSettings :exec
 UPDATE chats
-SET enabled = ?, settings_json = ?, summary_model_id = ?, updated_by = ?, updated_at = unixepoch()
+SET enabled = ?, settings_json = ?, summary_model_id = ?, chat_model_id = ?, updated_by = ?, updated_at = unixepoch()
 WHERE id = ?
 `
 
@@ -150,6 +283,7 @@ type UpdateChatSettingsParams struct {
 	Enabled        bool
 	SettingsJson   string
 	SummaryModelID sql.NullInt64
+	ChatModelID    sql.NullInt64
 	UpdatedBy      sql.NullInt64
 	ID             int64
 }
@@ -159,6 +293,7 @@ func (q *Queries) UpdateChatSettings(ctx context.Context, arg UpdateChatSettings
 		arg.Enabled,
 		arg.SettingsJson,
 		arg.SummaryModelID,
+		arg.ChatModelID,
 		arg.UpdatedBy,
 		arg.ID,
 	)

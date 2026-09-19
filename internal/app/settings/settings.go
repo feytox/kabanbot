@@ -56,9 +56,19 @@ type Chats interface {
 	MemberChats(ctx context.Context) ([]domain.Chat, error)
 	Chat(ctx context.Context, id int64) (domain.Chat, error)
 	UpdateChat(ctx context.Context, c domain.Chat, updatedBy int64) error
-	ChatsBySummaryModel(ctx context.Context, modelID int64) ([]domain.Chat, error)
-	UnbindSummaryModel(ctx context.Context, chatID, modelID int64) error
+	ChatsByModel(ctx context.Context, modelID int64) ([]domain.Chat, error)
+	UnbindModel(ctx context.Context, chatID, modelID int64) error
+	SetPersonality(ctx context.Context, chatID int64, text string, by int64, via domain.ChangeVia) error
+	PersonalityHistory(ctx context.Context, chatID int64, limit int) ([]domain.PersonalityChange, error)
+	PersonalityChange(ctx context.Context, id int64) (domain.PersonalityChange, error)
+	SetSummaryStyle(ctx context.Context, chatID int64, style string, by int64) error
 	UpsertUser(ctx context.Context, id int64, username, firstName string) error
+}
+
+// Usage reports how much a chat made the bot call models.
+type Usage interface {
+	UsageTotals(ctx context.Context, chatID int64, since time.Time) (domain.UsageTotals, error)
+	UsageByUser(ctx context.Context, chatID int64, since time.Time, limit int) ([]domain.UserUsage, error)
 }
 
 // Admins checks chat administrator rights.
@@ -85,13 +95,14 @@ type Service struct {
 	chats   Chats
 	admins  Admins
 	clients Clients
+	usage   Usage
 	ownerID int64
 	log     *slog.Logger
 }
 
 // New creates a Service. ownerID is the bot owner, who alone may share providers with everyone.
-func New(models Models, chats Chats, admins Admins, clients Clients, ownerID int64, log *slog.Logger) *Service {
-	return &Service{models: models, chats: chats, admins: admins, clients: clients, ownerID: ownerID, log: log}
+func New(models Models, chats Chats, admins Admins, clients Clients, usage Usage, ownerID int64, log *slog.Logger) *Service {
+	return &Service{models: models, chats: chats, admins: admins, clients: clients, usage: usage, ownerID: ownerID, log: log}
 }
 
 // IsOwner reports whether u is the bot owner.
@@ -137,7 +148,7 @@ func (s *Service) Providers(ctx context.Context, u User) ([]ProviderView, error)
 			if m.ProviderID != p.ID {
 				continue
 			}
-			chats, err := s.chats.ChatsBySummaryModel(ctx, m.ID)
+			chats, err := s.chats.ChatsByModel(ctx, m.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -365,12 +376,13 @@ func (s *Service) TestModel(ctx context.Context, u User, id int64) (string, time
 	return resp.Text, time.Since(start), nil
 }
 
-// UnbindModel detaches one of the user's models from a chat, whoever bound it there.
+// UnbindModel detaches one of the user's models from a chat, for summaries and chatting,
+// whoever bound it there.
 func (s *Service) UnbindModel(ctx context.Context, u User, modelID, chatID int64) error {
 	if _, err := s.ownModel(ctx, u, modelID); err != nil {
 		return err
 	}
-	return s.chats.UnbindSummaryModel(ctx, chatID, modelID)
+	return s.chats.UnbindModel(ctx, chatID, modelID)
 }
 
 // UsableModels lists the models the user may bind to chats.
@@ -445,6 +457,8 @@ type ChatView struct {
 	domain.Chat
 	// SummaryModel describes the bound model; nil means none.
 	SummaryModel *domain.ModelOption
+	// ChatModel describes the model bound for chatting; nil means the summary model is used.
+	ChatModel *domain.ModelOption
 }
 
 // Chats lists the chats the bot is in where the user is an admin.
@@ -473,7 +487,7 @@ func (s *Service) Chats(ctx context.Context, u User) ([]ChatView, error) {
 	return out, nil
 }
 
-// Chat returns a chat where the user is an admin.
+// Chat returns a chat where the user is an admin. A user is the admin of their own private chat.
 func (s *Service) Chat(ctx context.Context, u User, id int64) (ChatView, error) {
 	c, err := s.adminChat(ctx, u, id)
 	if err != nil {
@@ -486,6 +500,7 @@ func (s *Service) Chat(ctx context.Context, u User, id int64) (ChatView, error) 
 type ChatInput struct {
 	Settings       domain.ChatSettings
 	SummaryModelID *int64
+	ChatModelID    *int64
 }
 
 // UpdateChat changes a chat's settings. The user must be a chat admin, and a newly bound
@@ -495,26 +510,54 @@ func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput
 	if err != nil {
 		return ChatView{}, err
 	}
-	if m := in.SummaryModelID; m != nil && !equalPtr(m, c.SummaryModelID) {
-		usable, err := s.models.UsableModels(ctx, u.ID)
-		if err != nil {
+	for _, bind := range [][2]*int64{{in.SummaryModelID, c.SummaryModelID}, {in.ChatModelID, c.ChatModelID}} {
+		if err := s.checkBinding(ctx, u, bind[0], bind[1]); err != nil {
 			return ChatView{}, err
 		}
-		if !slices.ContainsFunc(usable, func(o domain.ModelOption) bool { return o.ID == *m }) {
-			return ChatView{}, invalid("Эту модель нельзя подключить: она не ваша и не общая")
-		}
 	}
-	c.Settings, c.SummaryModelID = in.Settings, in.SummaryModelID
+	if err := validateLimits(in.Settings.Limits); err != nil {
+		return ChatView{}, err
+	}
+	c.Settings, c.SummaryModelID, c.ChatModelID = in.Settings, in.SummaryModelID, in.ChatModelID
 	if err := s.chats.UpdateChat(ctx, c, u.ID); err != nil {
 		return ChatView{}, err
 	}
 	return s.view(ctx, c)
 }
 
+// checkBinding allows binding a model the user may use, or keeping the one already bound.
+func (s *Service) checkBinding(ctx context.Context, u User, want, bound *int64) error {
+	if want == nil || equalPtr(want, bound) {
+		return nil
+	}
+	usable, err := s.models.UsableModels(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(usable, func(o domain.ModelOption) bool { return o.ID == *want }) {
+		return invalid("Эту модель нельзя подключить: она не ваша и не общая")
+	}
+	return nil
+}
+
+func validateLimits(l domain.RateLimits) error {
+	if l.UserPerHour < 0 || l.UserPerHour > 10_000 || l.ChatPerHour < 0 || l.ChatPerHour > 10_000 {
+		return invalid("Лимит должен быть от 0 до 10 000 в час")
+	}
+	return nil
+}
+
+// adminChat loads a chat the user may manage: a group where they are an admin, or their private chat.
 func (s *Service) adminChat(ctx context.Context, u User, id int64) (domain.Chat, error) {
 	c, err := s.chats.Chat(ctx, id)
 	if err != nil {
 		return domain.Chat{}, err
+	}
+	if domain.IsPrivateChat(id) {
+		if id != u.ID {
+			return domain.Chat{}, ErrForbidden
+		}
+		return c, nil
 	}
 	ok, err := s.admins.IsAdmin(ctx, id, u.ID)
 	if err != nil {
@@ -528,18 +571,28 @@ func (s *Service) adminChat(ctx context.Context, u User, id int64) (domain.Chat,
 
 func (s *Service) view(ctx context.Context, c domain.Chat) (ChatView, error) {
 	v := ChatView{Chat: c}
-	if c.SummaryModelID == nil {
-		return v, nil
-	}
-	m, err := s.models.ModelOption(ctx, *c.SummaryModelID)
-	if errors.Is(err, domain.ErrNotFound) {
-		return v, nil
-	}
-	if err != nil {
+	var err error
+	if v.SummaryModel, err = s.option(ctx, c.SummaryModelID); err != nil {
 		return ChatView{}, err
 	}
-	v.SummaryModel = &m
+	if v.ChatModel, err = s.option(ctx, c.ChatModelID); err != nil {
+		return ChatView{}, err
+	}
 	return v, nil
+}
+
+func (s *Service) option(ctx context.Context, id *int64) (*domain.ModelOption, error) {
+	if id == nil {
+		return nil, nil
+	}
+	m, err := s.models.ModelOption(ctx, *id)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 func equalPtr(a, b *int64) bool {

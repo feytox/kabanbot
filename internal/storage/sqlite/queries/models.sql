@@ -5,6 +5,14 @@ JOIN models ON models.id = chats.summary_model_id
 JOIN providers ON providers.id = models.provider_id
 WHERE chats.id = ?;
 
+-- name: ChatChatModel :one
+-- The model a chat talks with: its chat model, or else its summary model.
+SELECT sqlc.embed(models), sqlc.embed(providers)
+FROM chats
+JOIN models ON models.id = coalesce(chats.chat_model_id, chats.summary_model_id)
+JOIN providers ON providers.id = models.provider_id
+WHERE chats.id = ?;
+
 -- name: ModelWithProvider :one
 SELECT sqlc.embed(models), sqlc.embed(providers)
 FROM models

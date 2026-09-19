@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/feytox/kabanbot/internal/domain"
@@ -65,6 +66,10 @@ func (s *MessageStore) Since(ctx context.Context, chatID int64, messageID int) (
 	if err != nil {
 		return nil, fmt.Errorf("messages since: %w", err)
 	}
+	return toMessages(rows), nil
+}
+
+func toMessages(rows []sqlcgen.Message) []domain.Message {
 	out := make([]domain.Message, len(rows))
 	for i, r := range rows {
 		out[i] = domain.Message{
@@ -80,7 +85,17 @@ func (s *MessageStore) Since(ctx context.Context, chatID int64, messageID int) (
 			out[i].ReplyTo = &domain.Quote{Username: r.ReplyToUsername.String, Text: r.ReplyToText.String}
 		}
 	}
-	return out, nil
+	return out
+}
+
+// Recent returns the chat's newest limit messages, oldest first.
+func (s *MessageStore) Recent(ctx context.Context, chatID int64, limit int) ([]domain.Message, error) {
+	rows, err := s.db.q.RecentMessages(ctx, sqlcgen.RecentMessagesParams{ChatID: chatID, Limit: int64(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("recent messages: %w", err)
+	}
+	slices.Reverse(rows)
+	return toMessages(rows), nil
 }
 
 // Users returns every human who has a cached message in the chat.

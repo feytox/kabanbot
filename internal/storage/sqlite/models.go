@@ -36,6 +36,16 @@ func (s *ModelStore) SummaryModel(ctx context.Context, chatID int64) (domain.Mod
 	return s.modelAndProvider(row.Model, row.Provider)
 }
 
+// ChatModel returns the model the chat talks with: its chat model, or else its summary model.
+// It returns domain.ErrNotFound if the chat has neither.
+func (s *ModelStore) ChatModel(ctx context.Context, chatID int64) (domain.Model, domain.Provider, error) {
+	row, err := s.db.q.ChatChatModel(ctx, chatID)
+	if err != nil {
+		return domain.Model{}, domain.Provider{}, notFound(err, "chat model")
+	}
+	return s.modelAndProvider(row.Model, row.Provider)
+}
+
 // ModelWithProvider returns a model and its provider with the decrypted API key.
 func (s *ModelStore) ModelWithProvider(ctx context.Context, modelID int64) (domain.Model, domain.Provider, error) {
 	row, err := s.db.q.ModelWithProvider(ctx, modelID)

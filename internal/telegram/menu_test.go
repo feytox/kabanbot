@@ -42,7 +42,7 @@ func newTestMenu(t *testing.T) (*menu, *sqlite.ChatStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {admin}}, nil, 0, slog.New(slog.DiscardHandler))
+	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {admin}}, nil, sqlite.NewUsageStore(db), 0, slog.New(slog.DiscardHandler))
 	for _, id := range []int64{admin, stranger} {
 		if err := svc.Seen(t.Context(), settings.User{ID: id}); err != nil {
 			t.Fatal(err)

@@ -158,3 +158,49 @@ func (q *Queries) PruneBoundary(ctx context.Context, arg PruneBoundaryParams) (i
 	err := row.Scan(&message_id)
 	return message_id, err
 }
+
+const recentMessages = `-- name: RecentMessages :many
+SELECT chat_id, message_id, user_id, username, text, sent_at, is_bot, reply_to_username, reply_to_text FROM messages
+WHERE chat_id = ?
+ORDER BY message_id DESC
+LIMIT ?
+`
+
+type RecentMessagesParams struct {
+	ChatID int64
+	Limit  int64
+}
+
+// The newest messages of the chat, newest first.
+func (q *Queries) RecentMessages(ctx context.Context, arg RecentMessagesParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, recentMessages, arg.ChatID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.MessageID,
+			&i.UserID,
+			&i.Username,
+			&i.Text,
+			&i.SentAt,
+			&i.IsBot,
+			&i.ReplyToUsername,
+			&i.ReplyToText,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

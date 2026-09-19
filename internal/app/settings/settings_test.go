@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/feytox/kabanbot/internal/app/settings"
@@ -74,7 +75,7 @@ func setup(t *testing.T) env {
 	}
 	clients := &fakeClients{}
 	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {alice, bob}}, clients,
-		owner, slog.New(slog.DiscardHandler))
+		sqlite.NewUsageStore(db), owner, slog.New(slog.DiscardHandler))
 	for _, u := range []settings.User{{ID: owner}, {ID: alice, Username: "alice"}, {ID: bob}, {ID: mallory}} {
 		if err := svc.Seen(ctx, u); err != nil {
 			t.Fatal(err)
@@ -296,4 +297,86 @@ func isValidation(err error) bool {
 
 func (c echoClient) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.Chunk, error] {
 	return llm.Single(c.Complete(ctx, req))
+}
+
+func TestPrivateChatBelongsToItsUser(t *testing.T) {
+	e := setup(t)
+	ctx := t.Context()
+	if err := e.chats.TouchChat(ctx, alice, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Chat(ctx, user(alice), alice); err != nil {
+		t.Fatalf("alice opening her private chat: %v", err)
+	}
+	if _, err := e.svc.Chat(ctx, user(bob), alice); !errors.Is(err, settings.ErrForbidden) {
+		t.Fatalf("bob opening alice's private chat: err = %v", err)
+	}
+	if err := e.svc.SetPersonality(ctx, user(bob), alice, "злой", domain.ViaTool); !errors.Is(err, settings.ErrForbidden) {
+		t.Fatalf("bob changing alice's personality: err = %v", err)
+	}
+	if chats, _ := e.svc.Chats(ctx, user(alice)); len(chats) != 1 || chats[0].ID != group {
+		t.Errorf("the groups list shows private chats: %+v", chats)
+	}
+}
+
+func TestPersonalityRightsAndRevert(t *testing.T) {
+	e := setup(t)
+	ctx := t.Context()
+	if err := e.chats.TouchChat(ctx, -200, "Другая", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SetPersonality(ctx, user(mallory), group, "злой", domain.ViaTool); !errors.Is(err, settings.ErrForbidden) {
+		t.Fatalf("non-admin: err = %v", err)
+	}
+	if ok, err := e.svc.CanManage(ctx, user(mallory), group); ok || err != nil {
+		t.Fatalf("CanManage(mallory) = %v, %v", ok, err)
+	}
+	if ok, err := e.svc.CanManage(ctx, user(alice), group); !ok || err != nil {
+		t.Fatalf("CanManage(alice) = %v, %v", ok, err)
+	}
+
+	for _, text := range []string{"весёлый кабан", "грустный ёж"} {
+		if err := e.svc.SetPersonality(ctx, user(alice), group, text, domain.ViaMenu); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.svc.SetPersonality(ctx, user(alice), group, strings.Repeat("я", settings.MaxPersonality+1), domain.ViaMenu); !isValidation(err) {
+		t.Fatalf("too long: err = %v", err)
+	}
+	history, err := e.svc.PersonalityHistory(ctx, user(bob), group)
+	if err != nil || len(history) != 2 {
+		t.Fatalf("history = %+v, %v", history, err)
+	}
+	first := history[1]
+	if err := e.svc.RevertPersonality(ctx, user(alice), -200, first.ID); !errors.Is(err, settings.ErrNotFound) {
+		t.Fatalf("reverting with another chat's change: err = %v", err)
+	}
+	if err := e.svc.RevertPersonality(ctx, user(bob), group, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := e.svc.Chat(ctx, user(alice), group); c.Personality != "весёлый кабан" {
+		t.Errorf("personality after revert = %q", c.Personality)
+	}
+}
+
+func TestChatModelBinding(t *testing.T) {
+	e := setup(t)
+	ctx := t.Context()
+	_, aliceModel := e.addModel(t, user(alice), false)
+	in := settings.ChatInput{Settings: domain.DefaultChatSettings(), ChatModelID: &aliceModel.ID}
+	if _, err := e.svc.UpdateChat(ctx, user(bob), group, in); !isValidation(err) {
+		t.Fatalf("bob binding alice's model for chat: err = %v", err)
+	}
+	v, err := e.svc.UpdateChat(ctx, user(alice), group, in)
+	if err != nil || v.ChatModel == nil || v.ChatModel.ID != aliceModel.ID || v.SummaryModel != nil {
+		t.Fatalf("view = %+v, %v", v, err)
+	}
+	views, _ := e.svc.Providers(ctx, user(alice))
+	if chats := views[0].Models[0].Chats; len(chats) != 1 {
+		t.Errorf("a chat-model binding is not listed: %+v", chats)
+	}
+	in.Settings.Limits.UserPerHour = -1
+	if _, err := e.svc.UpdateChat(ctx, user(alice), group, in); !isValidation(err) {
+		t.Errorf("negative limit: err = %v", err)
+	}
 }
