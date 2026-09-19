@@ -152,3 +152,23 @@ func TestStreamWithToolCalls(t *testing.T) {
 		t.Errorf("tools = %v", body["tools"])
 	}
 }
+
+func TestStreamErrorInsideStream(t *testing.T) {
+	for body, wantStatus := range map[string]int{
+		`{"error":{"code":503,"message":"Upstream error from Nvidia: Service temporarily overloaded","metadata":{"error_type":"provider_overloaded"}}}`: 503,
+		`{"error":{"code":"server_error","message":"The server had an error"}}`:                                                                         500,
+		`{"error":{"code":400,"message":"bad"}}`: 400,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: "+body+"\n\n")
+		}))
+		c := NewOpenRouter(Config{APIKey: "k", BaseURL: srv.URL})
+		_, err := llm.Collect(c.Stream(t.Context(), llm.Request{Model: "m"}))
+		srv.Close()
+		perr, ok := errors.AsType[*llm.Error](err)
+		if !ok || perr.Status != wantStatus || perr.Message == "" || perr.Temporary() != (wantStatus >= 500) {
+			t.Errorf("%s: err = %#v", body, err)
+		}
+	}
+}

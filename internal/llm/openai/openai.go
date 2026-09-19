@@ -2,15 +2,20 @@
 package openai
 
 import (
+	"cmp"
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"iter"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/feytox/kabanbot/internal/llm"
@@ -201,8 +206,36 @@ func (c *Client) wrap(err error) error {
 		}
 		return out
 	}
+	if serr, ok := errors.AsType[*ssestream.StreamError](err); ok {
+		return c.streamError(serr)
+	}
 	if _, ok := errors.AsType[*url.Error](err); ok {
 		return &llm.Error{Provider: c.name, Err: err}
 	}
 	return fmt.Errorf("openai: chat completion: %w", err)
+}
+
+// streamError describes an error sent inside a stream that began with HTTP 200, as OpenRouter
+// does when the upstream provider fails, e.g. {"error":{"code":503,"message":"…overloaded"}}.
+func (c *Client) streamError(serr *ssestream.StreamError) *llm.Error {
+	var body struct {
+		Error struct {
+			Code    jsontext.Value `json:"code"`
+			Message string         `json:"message"`
+		} `json:"error"`
+	}
+	out := &llm.Error{Provider: c.name, Message: serr.Message, Err: serr}
+	if err := json.Unmarshal(serr.Event.Data, &body); err != nil {
+		// Something went wrong on the server side mid-answer; worth another try.
+		out.Status = http.StatusInternalServerError
+		return out
+	}
+	out.Message = cmp.Or(body.Error.Message, out.Message)
+	if code, err := strconv.Atoi(string(body.Error.Code)); err == nil && code >= 400 && code < 600 {
+		out.Status = code
+	} else {
+		// OpenAI sends names like "server_error" instead of statuses.
+		out.Status = http.StatusInternalServerError
+	}
+	return out
 }
