@@ -215,7 +215,12 @@ func (b *Bot) onMessage(ctx context.Context, msg *telego.Message) {
 	case strings.Contains(msg.Text, "@all"):
 		b.spawn(ctx, func(ctx context.Context) { b.handleMentionAll(ctx, msg) })
 	case human && !isCmd && b.isForBot(msg):
-		b.spawn(ctx, func(ctx context.Context) { b.handleChat(ctx, msg, u, false) })
+		b.spawn(ctx, func(ctx context.Context) {
+			// A mere mention where chatting is off gets no answer, not even "typing…".
+			if s := b.features(ctx, msg.Chat.ID); s.Enabled && s.Chat {
+				b.handleChat(ctx, msg, u, false)
+			}
+		})
 	}
 }
 

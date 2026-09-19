@@ -6,6 +6,13 @@ Phase 2 is done: a Mini App for providers, models and group settings. We dropped
 
 Phase 3 is done: inline buttons in Telegram itself replace the Mini App. The plan is kept below for reference.
 
+Phase 4 is implemented: chatting, personality with tools and history, limits and usage stats. What remains is the manual check at the end of its section. Choices made along the way:
+- a private chat is a chat whose admin is its user; «Мой чат с ботом» picks its model and personality, and its limits cannot be lifted;
+- the chat model falls back to the summary model;
+- group menus have a «Общение с ботом» switch; a mere mention where it is off gets no answer, `/ask` gets an explanation;
+- limits cycle through presets in «Лимиты»; the defaults are 20 answers per user and 60 per chat per hour;
+- text for a group (personality, summary style) is typed in the private chat, reached from the group menu by `t.me/<bot>?start=g_<chat>`.
+
 ## Phase 3 — settings through inline buttons instead of the Mini App
 
 **Goal:** everything the Mini App could do (providers, models, keys, model test, per-group settings, unbinding) becomes screens made of messages with inline keyboards. The bot then needs no public HTTP server beyond `/healthz`.
