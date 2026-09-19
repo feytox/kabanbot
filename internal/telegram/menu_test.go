@@ -42,7 +42,7 @@ func newTestMenu(t *testing.T) (*menu, *sqlite.ChatStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {admin}}, nil, slog.New(slog.DiscardHandler))
+	svc := settings.New(sqlite.NewModelStore(db, box), chats, fakeAdmins{group: {admin}}, nil, 0, slog.New(slog.DiscardHandler))
 	for _, id := range []int64{admin, stranger} {
 		if err := svc.Seen(t.Context(), settings.User{ID: id}); err != nil {
 			t.Fatal(err)
@@ -112,6 +112,7 @@ func TestOtherUsersProviderIsNotFound(t *testing.T) {
 	for _, r := range []route{
 		{op: opProvider, id: p.ID},
 		{op: opProviderEdit, id: p.ID, word: fieldKey},
+		{op: opProviderShare, id: p.ID},
 		{op: opProviderDrop, id: p.ID},
 		{op: opModelNew, id: p.ID},
 		{op: opModel, id: mdl.ID},

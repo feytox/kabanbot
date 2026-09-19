@@ -74,7 +74,7 @@ In private chat:
 
 **Context.** The last N messages of the chat plus a system prompt with the chat's personality. The bot's own replies must go into `messages` (`is_bot`) so it can see its side of the conversation.
 
-**Chat model.** The `chats.chat_model_id` column already exists. Add model selection for chatting to the group menu from phase 3, in the same way as `summary_model_id`, with the same rule: only the user's own models. Also add `ChatTarget` to `llm/registry`.
+**Chat model.** The `chats.chat_model_id` column already exists. Add model selection for chatting to the group menu from phase 3, in the same way as `summary_model_id`, with the same "own or shared" rules. Also add `ChatTarget` to `llm/registry`.
 
 **Streaming:**
 - In private chat use `sendRichMessageDraft`: first a thinking block (`RichBlockThinking`), with `can_stop`. A `stopped_message_generation` update cancels the generation `ctx`. Finish with `sendRichMessage`.

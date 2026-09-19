@@ -16,7 +16,7 @@ import (
 // Config is the full application configuration.
 type Config struct {
 	BotToken string `env:"BOT_TOKEN,required,notEmpty"`
-	// OwnerID is the Telegram user ID of the bot owner, whose providers may reach local servers.
+	// OwnerID is the Telegram user ID of the bot owner, who may share providers and reach local servers.
 	OwnerID int64 `env:"OWNER_ID"`
 	// AllowedGroups restricts the bot to these chats. Empty means all chats are allowed.
 	AllowedGroups []int64 `env:"ALLOWED_GROUPS" envSeparator:","`

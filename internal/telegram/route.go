@@ -30,6 +30,7 @@ const (
 	opProviderCreate = "pk"  // pk:<kind> start the new provider dialog
 	opProvider       = "p"   // p:<provider>
 	opProviderEdit   = "pe"  // pe:<provider>:<name|url|key>
+	opProviderShare  = "ps"  // ps:<provider> toggle shared
 	opProviderDelete = "pd"  // pd:<provider> ask to confirm
 	opProviderDrop   = "pdy" // pdy:<provider> delete for real
 
@@ -82,6 +83,7 @@ var routeSpecs = map[string]routeSpec{
 	}},
 	opProvider:       {ids: 1},
 	opProviderEdit:   {ids: 1, words: []string{fieldName, fieldURL, fieldKey}},
+	opProviderShare:  {ids: 1},
 	opProviderDelete: {ids: 1},
 	opProviderDrop:   {ids: 1},
 

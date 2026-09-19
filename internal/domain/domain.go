@@ -67,6 +67,7 @@ type Provider struct {
 	APIKey  Secret
 	// KeyHint is the tail of the API key, safe to show to its owner.
 	KeyHint string
+	Shared  bool
 }
 
 // KeyHint returns the part of an API key that may be shown back to its owner.
@@ -128,6 +129,7 @@ type ModelOption struct {
 	ProviderKind ProviderKind
 	OwnerID      int64
 	OwnerName    string
+	Shared       bool
 }
 
 // Secret is a sensitive string that never shows up in logs or formatted output.

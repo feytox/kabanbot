@@ -36,7 +36,7 @@ func (b *Bot) errorText(ctx context.Context, err error) string {
 	return text
 }
 
-// seen records the user's names so other admins see whose model a group uses.
+// seen records the user's names so others see whose model a group uses or who shares one.
 func (b *Bot) seen(ctx context.Context, u settings.User) {
 	if err := b.deps.Settings.Seen(ctx, u); err != nil {
 		b.log.WarnContext(ctx, "record user", "user_id", u.ID, "err", err)

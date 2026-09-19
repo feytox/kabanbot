@@ -88,13 +88,17 @@ type Service struct {
 	chats   Chats
 	admins  Admins
 	clients Clients
+	ownerID int64
 	log     *slog.Logger
 }
 
-// New creates a Service.
-func New(models Models, chats Chats, admins Admins, clients Clients, log *slog.Logger) *Service {
-	return &Service{models: models, chats: chats, admins: admins, clients: clients, log: log}
+// New creates a Service. ownerID is the bot owner, who alone may share providers with everyone.
+func New(models Models, chats Chats, admins Admins, clients Clients, ownerID int64, log *slog.Logger) *Service {
+	return &Service{models: models, chats: chats, admins: admins, clients: clients, ownerID: ownerID, log: log}
 }
+
+// IsOwner reports whether u is the bot owner.
+func (s *Service) IsOwner(u User) bool { return s.ownerID != 0 && u.ID == s.ownerID }
 
 // CanStoreKeys reports whether providers can be saved, which needs MASTER_KEY.
 func (s *Service) CanStoreKeys() bool { return s.models.CanStoreKeys() }
@@ -160,11 +164,12 @@ type ProviderInput struct {
 	BaseURL string
 	// APIKey is required on creation. On update, empty keeps the stored key.
 	APIKey string
+	Shared bool
 }
 
 // CreateProvider adds a provider owned by the user.
 func (s *Service) CreateProvider(ctx context.Context, u User, in ProviderInput) (domain.Provider, error) {
-	if err := validateProvider(in, true); err != nil {
+	if err := s.validateProvider(u, in, true); err != nil {
 		return domain.Provider{}, err
 	}
 	p := domain.Provider{
@@ -174,6 +179,7 @@ func (s *Service) CreateProvider(ctx context.Context, u User, in ProviderInput) 
 		BaseURL: strings.TrimSpace(in.BaseURL),
 		APIKey:  domain.Secret(in.APIKey),
 		KeyHint: domain.KeyHint(in.APIKey),
+		Shared:  in.Shared,
 	}
 	id, err := s.models.CreateProvider(ctx, p)
 	if err != nil {
@@ -190,7 +196,7 @@ func (s *Service) UpdateProvider(ctx context.Context, u User, id int64, in Provi
 		return domain.Provider{}, err
 	}
 	in.Kind = p.Kind
-	if err := validateProvider(in, false); err != nil {
+	if err := s.validateProvider(u, in, false); err != nil {
 		return domain.Provider{}, err
 	}
 	baseURL := strings.TrimSpace(in.BaseURL)
@@ -199,7 +205,7 @@ func (s *Service) UpdateProvider(ctx context.Context, u User, id int64, in Provi
 		return domain.Provider{}, invalid("При смене адреса API нужно заново ввести ключ")
 	}
 
-	p.Name, p.BaseURL = strings.TrimSpace(in.Name), baseURL
+	p.Name, p.BaseURL, p.Shared = strings.TrimSpace(in.Name), baseURL, in.Shared
 	p.APIKey = domain.Secret(in.APIKey)
 	if in.APIKey != "" {
 		p.KeyHint = domain.KeyHint(in.APIKey)
@@ -224,7 +230,7 @@ func (s *Service) DeleteProvider(ctx context.Context, u User, id int64) error {
 	return nil
 }
 
-func validateProvider(in ProviderInput, creating bool) error {
+func (s *Service) validateProvider(u User, in ProviderInput, creating bool) error {
 	if !in.Kind.Valid() {
 		return invalid("Неизвестный тип провайдера")
 	}
@@ -236,7 +242,13 @@ func validateProvider(in ProviderInput, creating bool) error {
 			return err
 		}
 	}
-	return ValidateBaseURL(in.BaseURL)
+	if err := ValidateBaseURL(in.BaseURL); err != nil {
+		return err
+	}
+	if in.Shared && !s.IsOwner(u) {
+		return invalid("Делиться провайдером со всеми может только владелец бота")
+	}
+	return nil
 }
 
 // The Validate* functions check single fields, so a UI asking for them one at a time
@@ -483,7 +495,7 @@ type ChatInput struct {
 }
 
 // UpdateChat changes a chat's settings. The user must be a chat admin, and a newly bound
-// model must be the user's own. Keeping a model someone else bound is allowed.
+// model must be one the user may use. Keeping a model someone else bound is allowed.
 func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput) (ChatView, error) {
 	c, err := s.adminChat(ctx, u, id)
 	if err != nil {
@@ -495,7 +507,7 @@ func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput
 			return ChatView{}, err
 		}
 		if !slices.ContainsFunc(usable, func(o domain.ModelOption) bool { return o.ID == *m }) {
-			return ChatView{}, invalid("Подключить можно только свою модель")
+			return ChatView{}, invalid("Эту модель нельзя подключить: она не ваша и не общая")
 		}
 	}
 	c.Settings, c.SummaryModelID = in.Settings, in.SummaryModelID

@@ -122,6 +122,8 @@ func (m *menu) handle(ctx context.Context, v view, r route) (outcome, error) {
 		return show(m.provider(ctx, v, r.id))
 	case opProviderEdit:
 		return m.editProvider(ctx, v, r.id, r.word)
+	case opProviderShare:
+		return showWith("Сохранено")(m.shareProvider(ctx, v, r.id))
 	case opProviderDelete:
 		return show(m.confirmDeleteProvider(ctx, v, r.id))
 	case opProviderDrop:
@@ -329,7 +331,7 @@ func (m *menu) groupModels(ctx context.Context, v view, chatID int64) (screen, e
 		text += "Сейчас выбрана «" + html.EscapeString(current.DisplayName) + "» — личная модель " +
 			html.EscapeString(cmp.Or(current.OwnerName, "другого администратора")) + ". Если выбрать другую, вернуть её сможет только владелец.\n\n"
 	}
-	text += "Здесь только ваши модели. Подключить их можно в личке с ботом, в разделе «Мои модели»."
+	text += "Здесь ваши модели и общие модели владельца бота. Свои можно подключить в личке с ботом, в разделе «Мои модели»."
 
 	mark := func(on bool, label string) string {
 		if on {
@@ -341,11 +343,18 @@ func (m *menu) groupModels(ctx context.Context, v view, chatID int64) (screen, e
 		row(button(mark(current == nil, "По умолчанию"), route{op: opGroupModel, id: chatID})),
 	}
 	for _, o := range capped(usable) {
-		label := mark(current != nil && current.ID == o.ID, o.DisplayName+" · "+o.ProviderName)
+		label := mark(current != nil && current.ID == o.ID, optionLabel(o, v.user))
 		rows = append(rows, row(button(label, route{op: opGroupModel, id: chatID, id2: o.ID})))
 	}
 	rows = append(rows, back("Назад", route{op: opGroup, id: chatID}))
 	return screen{text: text, rows: rows}, nil
+}
+
+func optionLabel(o domain.ModelOption, viewer settings.User) string {
+	if o.OwnerID == viewer.ID {
+		return o.DisplayName + " · " + o.ProviderName
+	}
+	return o.DisplayName + " · общая, от " + cmp.Or(o.OwnerName, "владельца бота")
 }
 
 func (m *menu) setGroupModel(ctx context.Context, v view, chatID, modelID int64) (screen, error) {
@@ -453,6 +462,10 @@ func (m *menu) provider(ctx context.Context, v view, id int64) (screen, error) {
 		t.WriteString("Адрес API: " + html.EscapeString(p.BaseURL) + "\n")
 	}
 	t.WriteString("Ключ: " + keyHint(p.KeyHint) + "\n")
+	owner := m.svc.IsOwner(v.user)
+	if owner {
+		t.WriteString("Общий для всех групп: " + yesNo(p.Shared) + "\n")
+	}
 	if len(p.Models) == 0 {
 		t.WriteString("\nМоделей пока нет. Добавьте хотя бы одну.")
 	}
@@ -469,6 +482,9 @@ func (m *menu) provider(ctx context.Context, v view, id int64) (screen, error) {
 			button("Ключ", route{op: opProviderEdit, id: id, word: fieldKey}),
 		),
 	)
+	if owner {
+		rows = append(rows, row(button(check(p.Shared)+" Общий для всех групп", route{op: opProviderShare, id: id})))
+	}
 	rows = append(rows,
 		row(styled(button("Удалить провайдера", route{op: opProviderDelete, id: id}), telego.ButtonStyleDanger)),
 		back("Мои модели", route{op: opProviders}),
@@ -488,6 +504,27 @@ func keySaved(key string) string {
 		return "Ключ сохранён ••••" + hint + "."
 	}
 	return "Ключ сохранён."
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "да"
+	}
+	return "нет"
+}
+
+func (m *menu) shareProvider(ctx context.Context, v view, id int64) (screen, error) {
+	p, err := m.findProvider(ctx, v.user, id)
+	if err != nil {
+		return screen{}, err
+	}
+	_, err = m.svc.UpdateProvider(ctx, v.user, id, settings.ProviderInput{
+		Kind: p.Kind, Name: p.Name, BaseURL: p.BaseURL, Shared: !p.Shared,
+	})
+	if err != nil {
+		return screen{}, err
+	}
+	return m.provider(ctx, v, id)
 }
 
 func (m *menu) confirmDeleteProvider(ctx context.Context, v view, id int64) (screen, error) {
@@ -586,7 +623,7 @@ func (m *menu) editProvider(ctx context.Context, v view, id int64, field string)
 	if err != nil {
 		return outcome{}, err
 	}
-	in := settings.ProviderInput{Kind: p.Kind, Name: p.Name, BaseURL: p.BaseURL}
+	in := settings.ProviderInput{Kind: p.Kind, Name: p.Name, BaseURL: p.BaseURL, Shared: p.Shared}
 	var steps []step
 	switch field {
 	case fieldName:
@@ -609,7 +646,7 @@ func (m *menu) editProvider(ctx context.Context, v view, id int64, field string)
 			if err != nil {
 				return "", route{}, err
 			}
-			upd := settings.ProviderInput{Kind: cur.Kind, Name: cur.Name, BaseURL: cur.BaseURL, APIKey: in.APIKey}
+			upd := settings.ProviderInput{Kind: cur.Kind, Name: cur.Name, BaseURL: cur.BaseURL, Shared: cur.Shared, APIKey: in.APIKey}
 			switch field {
 			case fieldName:
 				upd.Name = in.Name

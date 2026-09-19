@@ -33,7 +33,7 @@ SELECT * FROM models WHERE id = ?;
 
 -- name: ModelOptionByID :one
 SELECT sqlc.embed(models), providers.name AS provider_name, providers.kind AS provider_kind,
-       providers.owner_user_id, coalesce(users.username, '') AS owner_username,
+       providers.owner_user_id, providers.shared, coalesce(users.username, '') AS owner_username,
        coalesce(users.first_name, '') AS owner_first_name
 FROM models
 JOIN providers ON providers.id = models.provider_id
@@ -41,12 +41,12 @@ LEFT JOIN users ON users.id = providers.owner_user_id
 WHERE models.id = ?;
 
 -- name: UsableModels :many
--- Models the user may bind to a chat: their own.
+-- Models the user may bind to a chat: their own and shared ones.
 SELECT sqlc.embed(models), providers.name AS provider_name, providers.kind AS provider_kind,
-       providers.owner_user_id, coalesce(users.username, '') AS owner_username,
+       providers.owner_user_id, providers.shared, coalesce(users.username, '') AS owner_username,
        coalesce(users.first_name, '') AS owner_first_name
 FROM models
 JOIN providers ON providers.id = models.provider_id
 LEFT JOIN users ON users.id = providers.owner_user_id
-WHERE providers.owner_user_id = @user_id
-ORDER BY models.id;
+WHERE providers.owner_user_id = @user_id OR providers.shared
+ORDER BY providers.shared, models.id;

@@ -26,8 +26,8 @@ Ports & adapters. Use cases never import Telegram, SQL or provider SDKs.
   - Only the owner can see or change a provider or model; other users get `ErrNotFound`.
   - API keys are write-only: never returned, only `key_hint`.
   - Changing `base_url` requires re-entering the key.
-  - Models are personal: there is no sharing. `OWNER_ID` only lets the owner's providers reach local servers.
-  - Chat settings need chat-admin rights (`getChatMember`, cached for 5 min). Binding a model requires it to be the user's own; keeping a model another admin bound is allowed.
+  - Only `OWNER_ID` may mark a provider `shared`; its models can then be picked in any group.
+  - Chat settings need chat-admin rights (`getChatMember`, cached for 5 min). Binding a model requires it to be the user's own or shared; keeping a model someone else bound is allowed.
   - A model's owner can unbind it from any chat.
   - `Validate*` functions check single fields so the menus can reject input step by step; the service checks them again.
 - `internal/llm` is the provider-agnostic port (`Client`, `Request`, `Target`), with adapters `llm/openai` (also used for OpenRouter) and `llm/gemini`.

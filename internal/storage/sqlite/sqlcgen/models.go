@@ -51,6 +51,7 @@ type Provider struct {
 	ApiKeyHint  string
 	CreatedAt   int64
 	UpdatedAt   int64
+	Shared      bool
 }
 
 type User struct {
