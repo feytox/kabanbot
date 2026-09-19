@@ -98,3 +98,57 @@ func TestCompleteRateLimitIsNotRetriedBySDK(t *testing.T) {
 		t.Errorf("the SDK made %d calls; retries belong to llm.Retrying", calls)
 	}
 }
+
+func TestStreamWithToolCalls(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []string{
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"При"}}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"вет"}}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"set_personality","arguments":"{\"te"}}]}}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"xt\":\"кабан\"}"}}]}}]}`,
+			`{"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+chunk+"\n\n")
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := New(Config{APIKey: "k", BaseURL: srv.URL})
+	call := llm.ToolCall{ID: "call_0", Name: "get_personality", Arguments: "{}"}
+	resp, err := llm.Collect(c.Stream(t.Context(), llm.Request{
+		Model: "m",
+		Tools: []llm.Tool{{Name: "set_personality", Description: "d", Parameters: map[string]any{"type": "object"}}},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "hi"},
+			{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{call}},
+			{Role: llm.RoleTool, Content: "кабан", ToolCall: &call},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := llm.ToolCall{ID: "call_1", Name: "set_personality", Arguments: `{"text":"кабан"}`}
+	if resp.Text != "Привет" || len(resp.ToolCalls) != 1 || resp.ToolCalls[0].Name != want.Name ||
+		resp.ToolCalls[0].ID != want.ID || resp.ToolCalls[0].Arguments != want.Arguments || resp.Usage.OutputTokens != 3 {
+		t.Fatalf("resp = %+v", resp)
+	}
+
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %v", body["messages"])
+	}
+	if calls, _ := msgs[1].(map[string]any)["tool_calls"].([]any); len(calls) != 1 {
+		t.Errorf("assistant message = %v", msgs[1])
+	}
+	if m := msgs[2].(map[string]any); m["role"] != "tool" || m["tool_call_id"] != "call_0" {
+		t.Errorf("tool message = %v", m)
+	}
+	if tools, _ := body["tools"].([]any); len(tools) != 1 {
+		t.Errorf("tools = %v", body["tools"])
+	}
+}

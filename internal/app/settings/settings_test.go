@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"iter"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -291,4 +292,8 @@ func TestChatSettingsRoundTrip(t *testing.T) {
 func isValidation(err error) bool {
 	_, ok := errors.AsType[*settings.ValidationError](err)
 	return ok
+}
+
+func (c echoClient) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.Chunk, error] {
+	return llm.Single(c.Complete(ctx, req))
 }

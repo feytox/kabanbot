@@ -3,6 +3,7 @@ package llm_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -22,6 +23,10 @@ func (f *flaky) Complete(context.Context, llm.Request) (llm.Response, error) {
 		return llm.Response{}, f.errs[f.calls-1]
 	}
 	return llm.Response{Text: "ok"}, nil
+}
+
+func (f *flaky) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.Chunk, error] {
+	return llm.Single(f.Complete(ctx, req))
 }
 
 func status(code int) error { return &llm.Error{Provider: "Test", Status: code} }
@@ -100,6 +105,38 @@ func TestRetryStopsBeforeDeadline(t *testing.T) {
 		_, err := (&llm.Retrying{Client: f, Policy: policy}).Complete(ctx, llm.Request{})
 		if perr, ok := errors.AsType[*llm.Error](err); !ok || perr.Status != 429 || f.calls != 1 {
 			t.Fatalf("err = %v, calls = %d; want the provider's error at once", err, f.calls)
+		}
+	})
+}
+
+// halfway yields some text and then fails.
+type halfway struct{ calls int }
+
+func (h *halfway) Complete(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+
+func (h *halfway) Stream(context.Context, llm.Request) iter.Seq2[llm.Chunk, error] {
+	h.calls++
+	return func(yield func(llm.Chunk, error) bool) {
+		if yield(llm.Chunk{Text: "нача"}, nil) {
+			yield(llm.Chunk{}, status(503))
+		}
+	}
+}
+
+func TestStreamRetriesOnlyBeforeFirstChunk(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := &flaky{errs: []error{status(503)}}
+		resp, err := llm.Collect((&llm.Retrying{Client: f, Policy: policy}).Stream(t.Context(), llm.Request{}))
+		if err != nil || resp.Text != "ok" || f.calls != 2 {
+			t.Fatalf("resp = %+v, err = %v, calls = %d", resp, err, f.calls)
+		}
+
+		h := &halfway{}
+		resp, err = llm.Collect((&llm.Retrying{Client: h, Policy: policy}).Stream(t.Context(), llm.Request{}))
+		if err == nil || h.calls != 1 {
+			t.Fatalf("a stream that already produced text was retried: %+v, %v, calls = %d", resp, err, h.calls)
 		}
 	})
 }

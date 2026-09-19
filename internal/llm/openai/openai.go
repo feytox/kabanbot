@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"net/http"
 	"net/url"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/feytox/kabanbot/internal/llm"
 )
@@ -72,6 +74,69 @@ func NewOpenRouter(cfg Config) *Client {
 
 // Complete implements llm.Client.
 func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
+	resp, err := c.api.Chat.Completions.New(ctx, params(req))
+	if err != nil {
+		return llm.Response{}, c.wrap(err)
+	}
+	if len(resp.Choices) == 0 {
+		return llm.Response{}, errors.New("openai: empty response")
+	}
+	msg := resp.Choices[0].Message
+	out := llm.Response{
+		Text: msg.Content,
+		Usage: llm.Usage{
+			InputTokens:  resp.Usage.PromptTokens,
+			OutputTokens: resp.Usage.CompletionTokens,
+		},
+	}
+	for _, tc := range msg.ToolCalls {
+		out.ToolCalls = append(out.ToolCalls, llm.ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
+	}
+	return out, nil
+}
+
+// Stream implements llm.Client.
+func (c *Client) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.Chunk, error] {
+	return func(yield func(llm.Chunk, error) bool) {
+		p := params(req)
+		p.StreamOptions.IncludeUsage = openai.Bool(true)
+		stream := c.api.Chat.Completions.NewStreaming(ctx, p)
+		defer func() { _ = stream.Close() }()
+
+		// Tool calls arrive in pieces, keyed by their index.
+		var calls []llm.ToolCall
+		var usage *llm.Usage
+		for stream.Next() {
+			chunk := stream.Current()
+			if u := chunk.Usage; u.PromptTokens > 0 || u.CompletionTokens > 0 {
+				usage = &llm.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}
+			}
+			if len(chunk.Choices) == 0 {
+				continue
+			}
+			delta := chunk.Choices[0].Delta
+			for _, tc := range delta.ToolCalls {
+				i := int(tc.Index)
+				for len(calls) <= i {
+					calls = append(calls, llm.ToolCall{})
+				}
+				calls[i].ID += tc.ID
+				calls[i].Name += tc.Function.Name
+				calls[i].Arguments += tc.Function.Arguments
+			}
+			if delta.Content != "" && !yield(llm.Chunk{Text: delta.Content}, nil) {
+				return
+			}
+		}
+		if err := stream.Err(); err != nil {
+			yield(llm.Chunk{}, c.wrap(err))
+			return
+		}
+		yield(llm.Chunk{ToolCalls: calls, Usage: usage}, nil)
+	}
+}
+
+func params(req llm.Request) openai.ChatCompletionNewParams {
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, openai.SystemMessage(req.System))
@@ -79,39 +144,53 @@ func (c *Client) Complete(ctx context.Context, req llm.Request) (llm.Response, e
 	for _, m := range req.Messages {
 		switch m.Role {
 		case llm.RoleAssistant:
-			msgs = append(msgs, openai.AssistantMessage(m.Content))
+			msg := openai.ChatCompletionAssistantMessageParam{}
+			if m.Content != "" {
+				msg.Content.OfString = openai.String(m.Content)
+			}
+			for _, tc := range m.ToolCalls {
+				msg.ToolCalls = append(msg.ToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+						ID:       tc.ID,
+						Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{Name: tc.Name, Arguments: tc.Arguments},
+					},
+				})
+			}
+			msgs = append(msgs, openai.ChatCompletionMessageParamUnion{OfAssistant: &msg})
+		case llm.RoleTool:
+			id := ""
+			if m.ToolCall != nil {
+				id = m.ToolCall.ID
+			}
+			msgs = append(msgs, openai.ToolMessage(m.Content, id))
 		default:
 			msgs = append(msgs, openai.UserMessage(m.Content))
 		}
 	}
 
-	params := openai.ChatCompletionNewParams{Model: req.Model, Messages: msgs}
+	p := openai.ChatCompletionNewParams{Model: req.Model, Messages: msgs}
 	if req.Temperature != nil {
-		params.Temperature = openai.Float(*req.Temperature)
+		p.Temperature = openai.Float(*req.Temperature)
 	}
 	if req.MaxTokens > 0 {
 		// max_tokens is understood by far more OpenAI-compatible servers than max_completion_tokens.
-		params.MaxTokens = openai.Int(req.MaxTokens)
+		p.MaxTokens = openai.Int(req.MaxTokens)
 	}
-
-	resp, err := c.api.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return llm.Response{}, c.wrap(err)
+	for _, t := range req.Tools {
+		p.Tools = append(p.Tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        t.Name,
+			Description: openai.String(t.Description),
+			Parameters:  shared.FunctionParameters(t.Parameters),
+		}))
 	}
-	if len(resp.Choices) == 0 {
-		return llm.Response{}, errors.New("openai: empty response")
-	}
-	return llm.Response{
-		Text: resp.Choices[0].Message.Content,
-		Usage: llm.Usage{
-			InputTokens:  resp.Usage.PromptTokens,
-			OutputTokens: resp.Usage.CompletionTokens,
-		},
-	}, nil
+	return p
 }
 
 // wrap describes an API or network failure as *llm.Error.
 func (c *Client) wrap(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	if apiErr, ok := errors.AsType[*openai.Error](err); ok {
 		out := &llm.Error{Provider: c.name, Status: apiErr.StatusCode, Message: apiErr.Message, Err: err}
 		if resp := apiErr.Response; resp != nil {

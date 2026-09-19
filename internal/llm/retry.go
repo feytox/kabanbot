@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -102,40 +103,72 @@ func WithRetry(c Client) *Retrying { return &Retrying{Client: c, Policy: Default
 
 // Complete implements Client.
 func (r *Retrying) Complete(ctx context.Context, req Request) (Response, error) {
-	p := r.Policy
 	for attempt := 1; ; attempt++ {
 		resp, err := r.Client.Complete(ctx, req)
-		if err == nil {
-			return resp, nil
+		if err == nil || !r.wait(ctx, err, attempt) {
+			return resp, err
 		}
-		perr, ok := errors.AsType[*Error](err)
-		if !ok || !perr.Temporary() || ctx.Err() != nil {
-			return Response{}, err
-		}
-		perr.Attempts = attempt
-		if attempt >= p.Attempts {
-			return Response{}, err
-		}
+	}
+}
 
-		delay, ok := p.delay(attempt, perr.RetryAfter)
-		if !ok {
-			return Response{}, err
+// Stream implements Client. A stream is retried only if it fails before its first chunk,
+// since the caller may already have shown what came before.
+func (r *Retrying) Stream(ctx context.Context, req Request) iter.Seq2[Chunk, error] {
+	return func(yield func(Chunk, error) bool) {
+		for attempt := 1; ; attempt++ {
+			started := false
+			var failed error
+			for c, err := range r.Client.Stream(ctx, req) {
+				if err != nil {
+					failed = err
+					break
+				}
+				started = true
+				if !yield(c, nil) {
+					return
+				}
+			}
+			if failed == nil {
+				return
+			}
+			if started || !r.wait(ctx, failed, attempt) {
+				yield(Chunk{}, failed)
+				return
+			}
 		}
-		if deadline, has := ctx.Deadline(); has && time.Until(deadline) < delay {
-			// Waiting would only end in a timeout; report the provider's error instead.
-			return Response{}, err
-		}
-		if f, _ := ctx.Value(observerKey{}).(func(RetryEvent)); f != nil {
-			f(RetryEvent{Attempt: attempt, Attempts: p.Attempts, Delay: delay, Err: perr})
-		}
+	}
+}
 
-		t := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return Response{}, err
-		case <-t.C:
-		}
+// wait sleeps before the next attempt and reports whether to make one.
+func (r *Retrying) wait(ctx context.Context, err error, attempt int) bool {
+	p := r.Policy
+	perr, ok := errors.AsType[*Error](err)
+	if !ok || !perr.Temporary() || ctx.Err() != nil {
+		return false
+	}
+	perr.Attempts = attempt
+	if attempt >= p.Attempts {
+		return false
+	}
+	delay, ok := p.delay(attempt, perr.RetryAfter)
+	if !ok {
+		return false
+	}
+	if deadline, has := ctx.Deadline(); has && time.Until(deadline) < delay {
+		// Waiting would only end in a timeout; report the provider's error instead.
+		return false
+	}
+	if f, _ := ctx.Value(observerKey{}).(func(RetryEvent)); f != nil {
+		f(RetryEvent{Attempt: attempt, Attempts: p.Attempts, Delay: delay, Err: perr})
+	}
+
+	t := time.NewTimer(delay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 

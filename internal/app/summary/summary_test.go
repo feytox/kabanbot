@@ -3,6 +3,7 @@ package summary
 import (
 	"context"
 	"errors"
+	"iter"
 	"strings"
 	"testing"
 
@@ -93,4 +94,8 @@ func TestTranscriptTruncatesLongQuotes(t *testing.T) {
 	if strings.Contains(got, long) || !strings.Contains(got, "…") {
 		t.Errorf("quote not truncated: %q", got)
 	}
+}
+
+func (f *fakeClient) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.Chunk, error] {
+	return llm.Single(f.Complete(ctx, req))
 }

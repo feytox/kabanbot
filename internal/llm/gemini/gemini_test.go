@@ -83,3 +83,62 @@ func TestCompleteRateLimit(t *testing.T) {
 		t.Fatalf("err = %#v", err)
 	}
 }
+
+func TestStreamWithToolCalls(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, ":streamGenerateContent") {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range []string{
+			`{"candidates":[{"content":{"role":"model","parts":[{"text":"хм","thought":true}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"text":"При"}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"text":"вет"}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"set_personality","args":{"text":"кабан"}},"thoughtSignature":"c2ln"}]}}],
+			  "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3}}`,
+		} {
+			_, _ = io.WriteString(w, "data: "+strings.ReplaceAll(chunk, "\n", "")+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(t.Context(), "key", srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := llm.ToolCall{ID: "c0", Name: "get_personality", Arguments: "{}", Signature: []byte("prev")}
+	resp, err := llm.Collect(c.Stream(t.Context(), llm.Request{
+		Model: "gemini-test",
+		Tools: []llm.Tool{{Name: "set_personality", Description: "d", Parameters: map[string]any{"type": "object"}}},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "hi"},
+			{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{prev}},
+			{Role: llm.RoleTool, Content: "кабан", ToolCall: &prev},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "Привет" || len(resp.ToolCalls) != 1 || resp.Usage.OutputTokens != 3 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if tc := resp.ToolCalls[0]; tc.Name != "set_personality" || tc.Arguments != `{"text":"кабан"}` || string(tc.Signature) != "sig" {
+		t.Errorf("tool call = %+v", tc)
+	}
+
+	contents, _ := body["contents"].([]any)
+	if len(contents) != 3 {
+		t.Fatalf("contents = %v", body["contents"])
+	}
+	call := contents[1].(map[string]any)["parts"].([]any)[0].(map[string]any)
+	if call["functionCall"] == nil || call["thoughtSignature"] != "cHJldg==" {
+		t.Errorf("model turn must replay the call with its signature: %v", call)
+	}
+	answer := contents[2].(map[string]any)["parts"].([]any)[0].(map[string]any)
+	if fr, _ := answer["functionResponse"].(map[string]any); fr["name"] != "get_personality" {
+		t.Errorf("tool answer = %v", answer)
+	}
+}
