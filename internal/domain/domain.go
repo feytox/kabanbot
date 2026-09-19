@@ -122,6 +122,8 @@ type ChatSettings struct {
 	Enabled bool
 	Features
 	Limits RateLimits
+	// Trigger makes the bot answer messages that call it by name, as if it was mentioned.
+	Trigger Trigger
 }
 
 // Features toggles individual bot features.

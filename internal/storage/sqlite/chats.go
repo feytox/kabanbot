@@ -28,6 +28,9 @@ type settingsJSON struct {
 	Chat        *bool `json:"chat,omitzero"`
 	UserPerHour *int  `json:"user_per_hour,omitzero"`
 	ChatPerHour *int  `json:"chat_per_hour,omitzero"`
+	// Trigger is empty when off.
+	Trigger      string `json:"trigger,omitzero"`
+	TriggerRegex bool   `json:"trigger_regex,omitzero"`
 }
 
 // TouchChat records the chat's title and whether the bot is a member.
@@ -83,6 +86,7 @@ func (s *ChatStore) UpdateChat(ctx context.Context, c domain.Chat, updatedBy int
 	flags, err := json.Marshal(settingsJSON{
 		Summary: &st.Summary, MentionAll: &st.MentionAll, Chat: &st.Chat,
 		UserPerHour: &st.Limits.UserPerHour, ChatPerHour: &st.Limits.ChatPerHour,
+		Trigger: st.Trigger.Text, TriggerRegex: st.Trigger.Regex,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
@@ -196,6 +200,7 @@ func toChat(c sqlcgen.Chat) (domain.Chat, error) {
 	setIf(&settings.Chat, flags.Chat)
 	setIf(&settings.Limits.UserPerHour, flags.UserPerHour)
 	setIf(&settings.Limits.ChatPerHour, flags.ChatPerHour)
+	settings.Trigger = domain.Trigger{Text: flags.Trigger, Regex: flags.TriggerRegex}
 	out := domain.Chat{
 		ID: c.ID, Title: c.Title, Settings: settings,
 		SummaryModelID: fromNullInt(c.SummaryModelID),

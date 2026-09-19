@@ -207,6 +207,9 @@ func (s *Service) system(c domain.Chat, u settings.User) string {
 		b.WriteString(c.Personality)
 		b.WriteString("\n</personality>")
 	}
+	if t := c.Settings.Trigger; t.Enabled() && !t.Regex {
+		fmt.Fprintf(&b, "\n\nВ этом чате к вам обращаются по имени «%s».", t.Text)
+	}
 	who := u.FirstName
 	if u.Username != "" {
 		who += " (@" + u.Username + ")"

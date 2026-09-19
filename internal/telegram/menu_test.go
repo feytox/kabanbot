@@ -71,6 +71,8 @@ func TestGroupCallbackFromNonAdminIsRejected(t *testing.T) {
 		{op: opLimits, id: group},
 		{op: opLimitUser, id: group},
 		{op: opStats, id: group},
+		{op: opTrigger, id: group},
+		{op: opTriggerOff, id: group},
 	} {
 		for _, private := range []bool{false, true} {
 			_, err := m.handle(ctx, view{user: settings.User{ID: stranger}, private: private}, r)
@@ -101,6 +103,8 @@ func TestProviderRoutesArePrivateOnly(t *testing.T) {
 		{op: opModelTest, id: 1},
 		{op: opPersonalityEdit, id: group},
 		{op: opStyleEdit, id: group},
+		{op: opTriggerName, id: group},
+		{op: opTriggerRegex, id: group},
 	} {
 		_, err := m.handle(t.Context(), view{user: settings.User{ID: admin}}, r)
 		if !errors.Is(err, errPrivateOnly) {

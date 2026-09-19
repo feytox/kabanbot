@@ -386,3 +386,30 @@ func TestChatModelBinding(t *testing.T) {
 		t.Errorf("negative limit: err = %v", err)
 	}
 }
+
+func TestTrigger(t *testing.T) {
+	e := setup(t)
+	ctx := t.Context()
+	for _, tr := range []domain.Trigger{
+		{Text: "(", Regex: true},
+		{Text: ".*", Regex: true},
+		{Text: "!!!"},
+		{Text: strings.Repeat("я", 201)},
+	} {
+		if err := settings.ValidateTrigger(tr); !isValidation(err) {
+			t.Errorf("ValidateTrigger(%+v) = %v, want a validation error", tr, err)
+		}
+	}
+	in := settings.ChatInput{Settings: domain.DefaultChatSettings()}
+	in.Settings.Trigger = domain.Trigger{Text: "Кабан"}
+	if _, err := e.svc.UpdateChat(ctx, user(mallory), group, in); !errors.Is(err, settings.ErrForbidden) {
+		t.Fatalf("non-admin setting the name: err = %v", err)
+	}
+	v, err := e.svc.UpdateChat(ctx, user(alice), group, in)
+	if err != nil || v.Settings.Trigger != in.Settings.Trigger {
+		t.Fatalf("admin setting the name: %+v, %v", v.Settings.Trigger, err)
+	}
+	if c, _ := e.chats.Chat(ctx, group); c.Settings.Trigger.Text != "Кабан" {
+		t.Errorf("stored trigger = %+v", c.Settings.Trigger)
+	}
+}

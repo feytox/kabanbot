@@ -47,6 +47,29 @@ func ValidateSummaryStyle(style string) error {
 	return nil
 }
 
+// maxTrigger bounds a trigger name or pattern.
+const maxTrigger = 200
+
+// ValidateTrigger checks the name or pattern the bot answers to. An empty one is off.
+func ValidateTrigger(t domain.Trigger) error {
+	switch {
+	case !t.Enabled():
+		return nil
+	case utf8.RuneCountInString(t.Text) > maxTrigger:
+		return invalid("Слишком длинно: не больше %d символов", maxTrigger)
+	case t.Regex:
+		if _, err := t.Compile(); err != nil {
+			return invalid("Это не регулярное выражение: %v", err)
+		}
+		if t.Match("") {
+			return invalid("Такое выражение совпадает с любым сообщением")
+		}
+	case len(domain.Words(t.Text)) == 0:
+		return invalid("В имени должны быть буквы или цифры")
+	}
+	return nil
+}
+
 // SetPersonality changes the chat's personality; empty text resets it. Only the chat's admins may.
 func (s *Service) SetPersonality(ctx context.Context, u User, chatID int64, text string, via domain.ChangeVia) error {
 	if _, err := s.adminChat(ctx, u, chatID); err != nil {

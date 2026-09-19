@@ -212,13 +212,11 @@ func (b *Bot) onMessage(ctx context.Context, msg *telego.Message) {
 		b.spawn(ctx, func(ctx context.Context) { b.handleAsk(ctx, msg) })
 	case strings.Contains(msg.Text, "@all"):
 		b.spawn(ctx, func(ctx context.Context) { b.handleMentionAll(ctx, msg) })
-	case human && !isCmd && b.isForBot(msg):
-		b.spawn(ctx, func(ctx context.Context) {
-			// A mere mention where chatting is off gets no answer, not even "typing…".
-			if s := b.features(ctx, msg.Chat.ID); s.Enabled && s.Chat {
-				b.handleChat(ctx, msg, u, false)
-			}
-		})
+	case human && !isCmd:
+		// A mere mention where chatting is off gets no answer, not even "typing…".
+		if s := b.features(ctx, msg.Chat.ID); s.Enabled && s.Chat && (b.isForBot(msg) || s.Trigger.Match(content(msg))) {
+			b.spawn(ctx, func(ctx context.Context) { b.handleChat(ctx, msg, u, false) })
+		}
 	}
 }
 

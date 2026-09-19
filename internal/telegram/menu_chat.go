@@ -84,6 +84,15 @@ func (m *menu) handleChatRoute(ctx context.Context, v view, r route) (outcome, e
 		return showWith("Сохранено")(m.limits(ctx, v, r.id))
 	case opStats:
 		return show(m.stats(ctx, v, r.id))
+	case opTrigger:
+		return show(m.trigger(ctx, v, r.id))
+	case opTriggerName, opTriggerRegex:
+		return m.editTrigger(ctx, v, r.id, r.op == opTriggerRegex)
+	case opTriggerOff:
+		if _, err := m.update(ctx, v, r.id, func(in *settings.ChatInput) { in.Settings.Trigger = domain.Trigger{} }); err != nil {
+			return outcome{}, err
+		}
+		return showWith("Выключено")(m.trigger(ctx, v, r.id))
 	}
 	return outcome{}, errBadRoute
 }
@@ -157,6 +166,9 @@ func (m *menu) groupScreen(v view, c settings.ChatView) screen {
 	if c.Personality != "" {
 		t.WriteString("Личность: задана\n")
 	}
+	if tr := st.Trigger; tr.Enabled() {
+		t.WriteString("Имя: " + html.EscapeString(triggerLabel(tr)) + "\n")
+	}
 	if c.SummaryModel == nil {
 		t.WriteString("\nПока модель для пересказов не выбрана, /summary не работает.")
 	}
@@ -181,11 +193,8 @@ func (m *menu) groupScreen(v view, c settings.ChatView) screen {
 		row(toggleButton("Общение с ботом", st.Chat, toggleChat)),
 		row(button("Модель для пересказов ›", route{op: opGroupModels, id: c.ID})),
 		row(button("Модель для общения ›", route{op: opChatModels, id: c.ID})),
-		row(
-			button("Личность", route{op: opPersonality, id: c.ID}),
-			button("Лимиты", route{op: opLimits, id: c.ID}),
-			button("Статистика", route{op: opStats, id: c.ID}),
-		),
+		row(button("Имя", route{op: opTrigger, id: c.ID}), button("Личность", route{op: opPersonality, id: c.ID})),
+		row(button("Лимиты", route{op: opLimits, id: c.ID}), button("Статистика", route{op: opStats, id: c.ID})),
 	}
 	if v.private {
 		rows = append(rows, back("Группы", route{op: opGroups}))
@@ -487,4 +496,88 @@ func tokens(n int64) string {
 		return strings.Replace(strconv.FormatFloat(float64(n)/1e3, 'f', 1, 64), ".", ",", 1) + " тыс."
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+// Trigger.
+
+func triggerLabel(t domain.Trigger) string {
+	if t.Regex {
+		return "/" + t.Text + "/"
+	}
+	return "«" + t.Text + "»"
+}
+
+func (m *menu) trigger(ctx context.Context, v view, chatID int64) (screen, error) {
+	c, err := m.svc.Chat(ctx, v.user, chatID)
+	if err != nil {
+		return screen{}, err
+	}
+	tr := c.Settings.Trigger
+	var t strings.Builder
+	t.WriteString("<b>Имя бота</b>\n\n")
+	t.WriteString("Бот отвечает на сообщения, где его зовут по имени, как если бы его упомянули. ")
+	t.WriteString("Имя ищется целым словом, без учёта регистра и знаков препинания. Вместо имени можно задать регулярное выражение.\n\n")
+	if tr.Enabled() {
+		kind := "Имя"
+		if tr.Regex {
+			kind = "Регулярное выражение"
+		}
+		t.WriteString(kind + ": <code>" + html.EscapeString(tr.Text) + "</code>")
+	} else {
+		t.WriteString("Сейчас выключено: бот отвечает только на упоминания, ответы и /ask.")
+	}
+
+	var rows [][]telego.InlineKeyboardButton
+	if v.private {
+		rows = append(rows, row(
+			button("Задать имя", route{op: opTriggerName, id: chatID}),
+			button("Задать regex", route{op: opTriggerRegex, id: chatID}),
+		))
+	} else {
+		link := m.startLink(startParamChatPrefix + strconv.FormatInt(chatID, 10))
+		rows = append(rows, row(telego.InlineKeyboardButton{Text: "Изменить в личке", URL: link}))
+	}
+	if tr.Enabled() {
+		rows = append(rows, row(styled(button("Выключить", route{op: opTriggerOff, id: chatID}), telego.ButtonStyleDanger)))
+	}
+	rows = append(rows, back("Назад", route{op: opGroup, id: chatID}))
+	return screen{text: t.String(), rows: rows}, nil
+}
+
+func (m *menu) editTrigger(ctx context.Context, v view, chatID int64, regex bool) (outcome, error) {
+	if domain.IsPrivateChat(chatID) {
+		// In a private chat the bot answers every message anyway.
+		return outcome{}, errBadRoute
+	}
+	if _, err := m.svc.Chat(ctx, v.user, chatID); err != nil {
+		return outcome{}, err
+	}
+	st := step{
+		prompt: "Отправьте имя, на которое бот будет отзываться, например «Кабан». " +
+			"Регистр и знаки препинания не важны. Отправьте «-», чтобы выключить.",
+		placeholder: "Кабан",
+		optional:    true,
+	}
+	if regex {
+		st.prompt = "Отправьте регулярное выражение (синтаксис Go/RE2), например ^кабан(чик)?[,!]. " +
+			"Регистр не важен. \\b работает только для латиницы. Отправьте «-», чтобы выключить."
+		st.placeholder = "^кабан"
+	}
+	var tr domain.Trigger
+	st.accept = func(text string) error {
+		tr = domain.Trigger{Text: text, Regex: regex && text != ""}
+		return settings.ValidateTrigger(tr)
+	}
+	return outcome{dialog: &dialog{
+		steps: []step{st},
+		finish: func(ctx context.Context) (string, route, error) {
+			if _, err := m.update(ctx, v, chatID, func(in *settings.ChatInput) { in.Settings.Trigger = tr }); err != nil {
+				return "", route{}, err
+			}
+			if !tr.Enabled() {
+				return "Выключено.", route{op: opTrigger, id: chatID}, nil
+			}
+			return "Сохранено.", route{op: opTrigger, id: chatID}, nil
+		},
+	}}, nil
 }

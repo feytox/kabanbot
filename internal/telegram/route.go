@@ -39,6 +39,10 @@ const (
 	opLimitUser          = "lu"  // lu:<chat> cycle the per-user limit
 	opLimitChat          = "lc"  // lc:<chat> cycle the per-chat limit
 	opStats              = "st"  // st:<chat>
+	opTrigger            = "tr"  // tr:<chat> the name the bot answers to
+	opTriggerName        = "trn" // trn:<chat> start the name dialog
+	opTriggerRegex       = "trr" // trr:<chat> start the pattern dialog
+	opTriggerOff         = "tro" // tro:<chat>
 
 	opProviders      = "pl"  // the user's providers
 	opProviderNew    = "pn"  // choose the kind of a new provider
@@ -106,6 +110,10 @@ var routeSpecs = map[string]routeSpec{
 	opLimitUser:          {ids: 1},
 	opLimitChat:          {ids: 1},
 	opStats:              {ids: 1},
+	opTrigger:            {ids: 1},
+	opTriggerName:        {ids: 1},
+	opTriggerRegex:       {ids: 1},
+	opTriggerOff:         {ids: 1},
 
 	opProviders:   {},
 	opProviderNew: {},

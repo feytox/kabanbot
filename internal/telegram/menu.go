@@ -78,7 +78,7 @@ func groupRoute(op string) bool {
 	switch op {
 	case opNoop, opClose, opGroup, opGroupToggle, opGroupModels, opGroupModel, opChatModels, opChatModel,
 		opPersonality, opPersonalityReset, opPersonalityHistory, opPersonalityRevert, opStyleReset,
-		opLimits, opLimitUser, opLimitChat, opStats:
+		opLimits, opLimitUser, opLimitChat, opStats, opTrigger, opTriggerOff:
 		return true
 	}
 	return false
