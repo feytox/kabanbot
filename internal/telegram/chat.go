@@ -59,7 +59,7 @@ func (b *Bot) handleChat(ctx context.Context, msg *telego.Message, u settings.Us
 		a.think(ctx, "")
 		out = a
 	} else {
-		g := &groupAnswer{b: b, msg: msg}
+		g := &groupAnswer{b: b, msg: msg, stream: b.features(ctx, msg.Chat.ID).Streaming}
 		typingCtx, stopTyping := context.WithCancel(ctx)
 		defer stopTyping()
 		go b.typing(typingCtx, msg)
@@ -164,9 +164,11 @@ func toolLabel(name string) string {
 }
 
 // groupAnswer streams by editing one message, sent when the first text arrives.
+// Without stream, the answer is sent once it is ready.
 type groupAnswer struct {
 	b          *Bot
 	msg        *telego.Message
+	stream     bool
 	sent       *telego.Message
 	last       time.Time
 	stopTyping func()
@@ -178,6 +180,9 @@ func (g *groupAnswer) started() bool { return g.sent != nil }
 func (g *groupAnswer) retrying(context.Context, llm.RetryEvent) {}
 
 func (g *groupAnswer) progress(ctx context.Context, p chat.Progress) {
+	if !g.stream {
+		return
+	}
 	text := p.Text
 	if p.Tool != "" {
 		text = strings.TrimSpace(text + "\n\n_" + toolLabel(p.Tool) + "_")

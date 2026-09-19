@@ -132,6 +132,8 @@ type Features struct {
 	MentionAll bool
 	// Chat lets people talk to the bot.
 	Chat bool
+	// Streaming shows a group answer as it is written; otherwise it is sent when ready.
+	Streaming bool
 }
 
 // RateLimits bound how often the bot answers in a chat. Zero means no limit.
@@ -143,7 +145,7 @@ type RateLimits struct {
 // DefaultChatSettings are the settings of a chat nobody has configured yet.
 func DefaultChatSettings() ChatSettings {
 	s := ChatSettings{Enabled: true, Limits: RateLimits{UserPerHour: 20, ChatPerHour: 60}}
-	s.Summary, s.MentionAll, s.Chat = true, true, true
+	s.Summary, s.MentionAll, s.Chat, s.Streaming = true, true, true, true
 	return s
 }
 

@@ -73,12 +73,15 @@ func TestChatStoreSettingsAndPersonality(t *testing.T) {
 	if c.Settings != domain.DefaultChatSettings() {
 		t.Errorf("new chat settings = %+v", c.Settings)
 	}
-	c.Settings.Chat = false
+	if !c.Settings.Streaming {
+		t.Error("streaming must default to on")
+	}
+	c.Settings.Chat, c.Settings.Streaming = false, false
 	c.Settings.Limits = domain.RateLimits{UserPerHour: 3}
 	if err := s.UpdateChat(ctx, c, 1); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Chat(ctx, -1); got.Settings.Chat || got.Settings.Limits != (domain.RateLimits{UserPerHour: 3}) {
+	if got, _ := s.Chat(ctx, -1); got.Settings.Chat || got.Settings.Streaming || got.Settings.Limits != (domain.RateLimits{UserPerHour: 3}) {
 		t.Errorf("saved settings = %+v", got.Settings)
 	}
 

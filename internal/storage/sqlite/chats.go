@@ -26,6 +26,7 @@ type settingsJSON struct {
 	Summary     *bool `json:"summary,omitzero"`
 	MentionAll  *bool `json:"mention_all,omitzero"`
 	Chat        *bool `json:"chat,omitzero"`
+	Streaming   *bool `json:"streaming,omitzero"`
 	UserPerHour *int  `json:"user_per_hour,omitzero"`
 	ChatPerHour *int  `json:"chat_per_hour,omitzero"`
 	// Trigger is empty when off.
@@ -84,7 +85,7 @@ func (s *ChatStore) ChatsByModel(ctx context.Context, modelID int64) ([]domain.C
 func (s *ChatStore) UpdateChat(ctx context.Context, c domain.Chat, updatedBy int64) error {
 	st := c.Settings
 	flags, err := json.Marshal(settingsJSON{
-		Summary: &st.Summary, MentionAll: &st.MentionAll, Chat: &st.Chat,
+		Summary: &st.Summary, MentionAll: &st.MentionAll, Chat: &st.Chat, Streaming: &st.Streaming,
 		UserPerHour: &st.Limits.UserPerHour, ChatPerHour: &st.Limits.ChatPerHour,
 		Trigger: st.Trigger.Text, TriggerRegex: st.Trigger.Regex,
 	})
@@ -198,6 +199,7 @@ func toChat(c sqlcgen.Chat) (domain.Chat, error) {
 	setIf(&settings.Summary, flags.Summary)
 	setIf(&settings.MentionAll, flags.MentionAll)
 	setIf(&settings.Chat, flags.Chat)
+	setIf(&settings.Streaming, flags.Streaming)
 	setIf(&settings.Limits.UserPerHour, flags.UserPerHour)
 	setIf(&settings.Limits.ChatPerHour, flags.ChatPerHour)
 	settings.Trigger = domain.Trigger{Text: flags.Trigger, Regex: flags.TriggerRegex}

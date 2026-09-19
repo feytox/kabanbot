@@ -70,6 +70,7 @@ const (
 	toggleSummary = "sum"
 	toggleMention = "all"
 	toggleChat    = "talk"
+	toggleStream  = "stream"
 
 	fieldName        = "name"
 	fieldURL         = "url"
@@ -93,7 +94,7 @@ var routeSpecs = map[string]routeSpec{
 	opGroups: {},
 
 	opGroup:       {ids: 1},
-	opGroupToggle: {ids: 1, words: []string{toggleEnabled, toggleSummary, toggleMention, toggleChat}},
+	opGroupToggle: {ids: 1, words: []string{toggleEnabled, toggleSummary, toggleMention, toggleChat, toggleStream}},
 	opGroupModels: {ids: 1},
 	opGroupModel:  {ids: 2},
 

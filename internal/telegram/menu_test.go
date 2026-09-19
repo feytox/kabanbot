@@ -163,6 +163,7 @@ func TestToggleKeepsModelBindings(t *testing.T) {
 		{op: opChatModel, id: group, id2: mdl.ID},
 		{op: opGroupModel, id: group, id2: mdl.ID},
 		{op: opGroupToggle, id: group, word: toggleChat},
+		{op: opGroupToggle, id: group, word: toggleStream},
 		{op: opLimitUser, id: group},
 	} {
 		if _, err := m.handle(ctx, view{user: u}, r); err != nil {
@@ -170,7 +171,7 @@ func TestToggleKeepsModelBindings(t *testing.T) {
 		}
 	}
 	c, _ := chats.Chat(ctx, group)
-	if c.ChatModelID == nil || c.SummaryModelID == nil || c.Settings.Chat || c.Settings.Limits.UserPerHour != 50 {
+	if c.ChatModelID == nil || c.SummaryModelID == nil || c.Settings.Chat || c.Settings.Streaming || c.Settings.Limits.UserPerHour != 50 {
 		t.Fatalf("chat = %+v", c)
 	}
 }

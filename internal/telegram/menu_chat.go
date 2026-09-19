@@ -126,6 +126,8 @@ func toggle(st *domain.ChatSettings, word string) {
 		st.MentionAll = !st.MentionAll
 	case toggleChat:
 		st.Chat = !st.Chat
+	case toggleStream:
+		st.Streaming = !st.Streaming
 	}
 }
 
@@ -190,7 +192,7 @@ func (m *menu) groupScreen(v view, c settings.ChatView) screen {
 	rows := [][]telego.InlineKeyboardButton{
 		row(power),
 		row(toggleButton("Пересказы", st.Summary, toggleSummary), toggleButton("@all", st.MentionAll, toggleMention)),
-		row(toggleButton("Общение с ботом", st.Chat, toggleChat)),
+		row(toggleButton("Общение с ботом", st.Chat, toggleChat), toggleButton("Стриминг ответов", st.Streaming, toggleStream)),
 		row(button("Модель для пересказов ›", route{op: opGroupModels, id: c.ID})),
 		row(button("Модель для общения ›", route{op: opChatModels, id: c.ID})),
 		row(button("Имя", route{op: opTrigger, id: c.ID}), button("Личность", route{op: opPersonality, id: c.ID})),
