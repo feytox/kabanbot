@@ -14,13 +14,12 @@ import (
 	"github.com/feytox/kabanbot/internal/app/chat"
 	"github.com/feytox/kabanbot/internal/app/settings"
 	"github.com/feytox/kabanbot/internal/domain"
+	"github.com/feytox/kabanbot/internal/llm"
 )
 
 const (
 	// editInterval spaces out edits of a streamed answer in groups, which Telegram rate-limits.
 	editInterval = 1500 * time.Millisecond
-	// draftInterval spaces out draft updates in private chats.
-	draftInterval = 400 * time.Millisecond
 )
 
 // Chatter answers people who talk to the bot.
@@ -28,10 +27,10 @@ type Chatter interface {
 	Reply(ctx context.Context, req chat.Request, progress func(chat.Progress)) (string, error)
 }
 
-// draftKey identifies a streamed draft, so the user's "stop" can cancel it.
-type draftKey struct {
-	chatID  int64
-	draftID int
+// answerKey identifies an answer being written in a private chat, so its stop button can cancel it.
+type answerKey struct {
+	chatID int64
+	id     int
 }
 
 // isForBot reports whether a group message talks to the bot: it mentions the bot
@@ -48,17 +47,17 @@ func (b *Bot) isForBot(msg *telego.Message) bool {
 func (b *Bot) handleChat(ctx context.Context, msg *telego.Message, u settings.User, explicit bool) {
 	var out answer
 	if msg.Chat.Type == telego.ChatTypePrivate {
-		d := &draftAnswer{b: b, msg: msg, id: rand.IntN(1<<31-2) + 1}
-		key := draftKey{msg.Chat.ID, d.id}
+		a := &thinkingAnswer{b: b, msg: msg, id: rand.IntN(1<<31-2) + 1}
+		key := answerKey{msg.Chat.ID, a.id}
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		b.drafts.Store(key, cancel)
+		b.answers.Store(key, cancel)
 		defer func() {
-			b.drafts.Delete(key)
+			b.answers.Delete(key)
 			cancel()
 		}()
-		d.think(ctx, "Думаю…")
-		out = d
+		a.think(ctx, "")
+		out = a
 	} else {
 		g := &groupAnswer{b: b, msg: msg}
 		typingCtx, stopTyping := context.WithCancel(ctx)
@@ -68,7 +67,8 @@ func (b *Bot) handleChat(ctx context.Context, msg *telego.Message, u settings.Us
 		out = g
 	}
 
-	text, err := b.deps.Chat.Reply(ctx, chat.Request{ChatID: msg.Chat.ID, User: u}, func(p chat.Progress) {
+	replyCtx := llm.WithRetryObserver(ctx, func(e llm.RetryEvent) { out.retrying(ctx, e) })
+	text, err := b.deps.Chat.Reply(replyCtx, chat.Request{ChatID: msg.Chat.ID, User: u}, func(p chat.Progress) {
 		out.progress(ctx, p)
 	})
 	// A stopped or timed-out answer still gets shown as far as it went.
@@ -129,16 +129,20 @@ func (b *Bot) remember(ctx context.Context, sent *telego.Message, text string) {
 	}
 }
 
-// onStopped cancels a draft whose "stop" button the user pressed.
-func (b *Bot) onStopped(s *telego.MessageGenerationStopped) {
-	if cancel, ok := b.drafts.Load(draftKey{s.Chat.ID, s.DraftID}); ok {
+// stopAnswer cancels an answer whose stop button the user pressed. It reports whether one was running.
+func (b *Bot) stopAnswer(chatID int64, id int) bool {
+	cancel, ok := b.answers.Load(answerKey{chatID, id})
+	if ok {
 		cancel.(context.CancelFunc)()
 	}
+	return ok
 }
 
 // answer shows a reply as the model writes it.
 type answer interface {
 	progress(ctx context.Context, p chat.Progress)
+	// retrying tells that the model failed and will be asked again.
+	retrying(ctx context.Context, e llm.RetryEvent)
 	// started reports whether any of the answer is already shown.
 	started() bool
 	// finish shows the final text and returns the message holding it, if it was sent.
@@ -169,6 +173,9 @@ type groupAnswer struct {
 }
 
 func (g *groupAnswer) started() bool { return g.sent != nil }
+
+// retrying keeps quiet in groups: "typing…" goes on until the answer or the error.
+func (g *groupAnswer) retrying(context.Context, llm.RetryEvent) {}
 
 func (g *groupAnswer) progress(ctx context.Context, p chat.Progress) {
 	text := p.Text
@@ -235,56 +242,87 @@ func (g *groupAnswer) fail(ctx context.Context, note string) {
 	g.b.notify(ctx, g.msg, strings.Trim(note, "_"))
 }
 
-// draftAnswer streams through message drafts, which the user can stop, then sends the answer.
-type draftAnswer struct {
-	b    *Bot
-	msg  *telego.Message
-	id   int
-	last time.Time
-	text bool
+// thinkingAnswer shows a "thinking" message with a stop button while the answer is written,
+// then replaces it with the whole answer at once.
+type thinkingAnswer struct {
+	b        *Bot
+	msg      *telego.Message
+	id       int
+	status   *telego.Message
+	text     bool
+	lastNote string
 }
 
-func (d *draftAnswer) started() bool { return d.text }
+func (a *thinkingAnswer) started() bool { return a.text }
 
-// think shows a "thinking" placeholder with a stop button.
-func (d *draftAnswer) think(ctx context.Context, label string) {
-	d.draft(ctx, telego.InputRichMessage{HTML: "<tg-thinking>" + label + "</tg-thinking>"})
-}
-
-func (d *draftAnswer) draft(ctx context.Context, m telego.InputRichMessage) {
-	err := d.b.api.SendRichMessageDraft(ctx, &telego.SendRichMessageDraftParams{
-		ChatID: d.msg.Chat.ID, DraftID: d.id, RichMessage: m, CanStop: true,
+// think sends the status message, or updates it with a note such as a retry.
+func (a *thinkingAnswer) think(ctx context.Context, note string) {
+	text := "💭 Думаю…"
+	if note != "" {
+		text += "\n\n" + note
+	}
+	if a.status != nil && note == a.lastNote {
+		return
+	}
+	a.lastNote = note
+	stop := &telego.InlineKeyboardMarkup{InlineKeyboard: [][]telego.InlineKeyboardButton{
+		row(button("Остановить", route{op: opStop, id: int64(a.id)})),
+	}}
+	if a.status == nil {
+		sent, err := a.b.api.SendMessage(ctx, tu.Message(a.msg.Chat.ChatID(), text).WithReplyMarkup(stop))
+		if err != nil {
+			a.b.log.WarnContext(ctx, "send thinking status", "err", err)
+			return
+		}
+		a.status = sent
+		return
+	}
+	_, err := a.b.api.EditMessageText(ctx, &telego.EditMessageTextParams{
+		ChatID: a.msg.Chat.ChatID(), MessageID: a.status.MessageID, Text: text, ReplyMarkup: stop,
 	})
-	if err != nil && ctx.Err() == nil {
-		d.b.log.DebugContext(ctx, "send draft", "err", err)
+	if err != nil && !strings.Contains(err.Error(), "message is not modified") {
+		a.b.log.DebugContext(ctx, "edit thinking status", "err", err)
 	}
 }
 
-func (d *draftAnswer) progress(ctx context.Context, p chat.Progress) {
+func (a *thinkingAnswer) retrying(ctx context.Context, e llm.RetryEvent) {
+	a.think(ctx, fmt.Sprintf("%s: %s. Повторю через %.0f с (попытка %d из %d).",
+		e.Err.Provider, problem(e.Err), e.Delay.Seconds(), e.Attempt+1, e.Attempts))
+}
+
+func (a *thinkingAnswer) progress(ctx context.Context, p chat.Progress) {
+	a.text = a.text || p.Text != ""
 	if p.Tool != "" {
-		d.think(ctx, toolLabel(p.Tool))
-		return
+		a.think(ctx, toolLabel(p.Tool))
 	}
-	if p.Text == "" || time.Since(d.last) < draftInterval {
-		return
-	}
-	d.last, d.text = time.Now(), true
-	d.draft(ctx, telego.InputRichMessage{Markdown: tail(p.Text, richMessageLimit)})
 }
 
-func (d *draftAnswer) finish(ctx context.Context, text string) *telego.Message {
+// done removes the status message before the result is sent.
+func (a *thinkingAnswer) done(ctx context.Context) {
+	if a.status == nil {
+		return
+	}
+	err := a.b.api.DeleteMessage(ctx, &telego.DeleteMessageParams{ChatID: a.msg.Chat.ChatID(), MessageID: a.status.MessageID})
+	if err != nil {
+		a.b.log.WarnContext(ctx, "delete thinking status", "err", err)
+	}
+	a.status = nil
+}
+
+func (a *thinkingAnswer) finish(ctx context.Context, text string) *telego.Message {
+	a.done(ctx)
 	if strings.TrimSpace(text) == "" {
 		text = "🤷 Модель ничего не ответила."
 	}
 	var first *telego.Message
 	for _, part := range split(text, richMessageLimit) {
-		sent, err := d.b.api.SendRichMessage(ctx, &telego.SendRichMessageParams{
-			ChatID: d.msg.Chat.ChatID(), RichMessage: telego.InputRichMessage{Markdown: part},
+		sent, err := a.b.api.SendRichMessage(ctx, &telego.SendRichMessageParams{
+			ChatID: a.msg.Chat.ChatID(), RichMessage: telego.InputRichMessage{Markdown: part},
 		})
 		if err != nil {
-			d.b.log.WarnContext(ctx, "send rich answer, falling back to plain text", "err", err)
-			if sent, err = d.b.api.SendMessage(ctx, tu.Message(d.msg.Chat.ChatID(), part)); err != nil {
-				d.b.log.ErrorContext(ctx, "send answer", "err", err)
+			a.b.log.WarnContext(ctx, "send rich answer, falling back to plain text", "err", err)
+			if sent, err = a.b.api.SendMessage(ctx, tu.Message(a.msg.Chat.ChatID(), part)); err != nil {
+				a.b.log.ErrorContext(ctx, "send answer", "err", err)
 				return first
 			}
 		}
@@ -295,8 +333,9 @@ func (d *draftAnswer) finish(ctx context.Context, text string) *telego.Message {
 	return first
 }
 
-func (d *draftAnswer) fail(ctx context.Context, note string) {
-	d.b.sendText(ctx, d.msg.Chat.ID, strings.Trim(note, "_"))
+func (a *thinkingAnswer) fail(ctx context.Context, note string) {
+	a.done(ctx)
+	a.b.sendText(ctx, a.msg.Chat.ID, strings.Trim(note, "_"))
 }
 
 // editRich replaces a message's content with Markdown.

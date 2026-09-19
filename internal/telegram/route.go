@@ -16,6 +16,7 @@ const callbackDataLimit = 64
 const (
 	opNoop  = "noop"  // a disabled button
 	opClose = "close" // delete the menu message
+	opStop  = "stop"  // stop:<answer> stop an answer being written in a private chat
 
 	opHome   = "home" // private main menu
 	opGroups = "gl"   // groups where the user is an admin
@@ -82,6 +83,7 @@ type routeSpec struct {
 var routeSpecs = map[string]routeSpec{
 	opNoop:  {},
 	opClose: {},
+	opStop:  {ids: 1},
 
 	opHome:   {},
 	opGroups: {},

@@ -90,7 +90,7 @@ func (m *menu) handle(ctx context.Context, v view, r route) (outcome, error) {
 		return outcome{}, errPrivateOnly
 	}
 	switch r.op {
-	case opNoop, opClose:
+	case opNoop, opClose, opStop:
 		return outcome{}, nil
 	case opHome:
 		return show(m.home(v), nil)

@@ -210,6 +210,14 @@ func (b *Bot) handleCallback(ctx context.Context, q *telego.CallbackQuery) {
 
 	u := toUser(q.From)
 	switch r.op {
+	case opStop:
+		// Only the user of a private chat sees its stop button; the key includes the chat.
+		if private && b.stopAnswer(msg.Chat.ID, int(r.id)) {
+			answer("Останавливаю…", false)
+		} else {
+			answer("Ответ уже готов.", false)
+		}
+		return
 	case opClose:
 		// Only its receiver sees an ephemeral menu; a regular one in a group is closed by its admins.
 		if msg.EphemeralMessageID == 0 && !private {

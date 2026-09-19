@@ -93,8 +93,8 @@ type Bot struct {
 
 	// titles caches known chat titles so chats are written to the store only when they change.
 	titles sync.Map // chat ID -> chatState
-	// drafts holds the cancel funcs of answers being streamed in private chats.
-	drafts sync.Map // draftKey -> context.CancelFunc
+	// answers holds the cancel funcs of answers being written in private chats.
+	answers sync.Map // answerKey -> context.CancelFunc
 }
 
 var (
@@ -132,7 +132,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 	updates, err := b.api.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
 		Timeout:        30,
-		AllowedUpdates: []string{"message", "callback_query", "my_chat_member", "stopped_message_generation"},
+		AllowedUpdates: []string{"message", "callback_query", "my_chat_member"},
 	})
 	if err != nil {
 		return fmt.Errorf("telegram: long polling: %w", err)
@@ -147,8 +147,6 @@ func (b *Bot) Run(ctx context.Context) error {
 			b.spawn(ctx, func(ctx context.Context) { b.handleCallback(ctx, u.CallbackQuery) })
 		case u.MyChatMember != nil:
 			b.onMembership(ctx, u.MyChatMember)
-		case u.StoppedMessageGeneration != nil:
-			b.onStopped(u.StoppedMessageGeneration)
 		}
 	}
 	b.wg.Wait()
