@@ -61,6 +61,16 @@ func TestGroupCallbackFromNonAdminIsRejected(t *testing.T) {
 		{op: opGroupToggle, id: group, word: toggleSummary},
 		{op: opGroupModels, id: group},
 		{op: opGroupModel, id: group},
+		{op: opGroupToggle, id: group, word: toggleChat},
+		{op: opChatModels, id: group},
+		{op: opChatModel, id: group},
+		{op: opPersonality, id: group},
+		{op: opPersonalityReset, id: group},
+		{op: opPersonalityHistory, id: group},
+		{op: opStyleReset, id: group},
+		{op: opLimits, id: group},
+		{op: opLimitUser, id: group},
+		{op: opStats, id: group},
 	} {
 		for _, private := range []bool{false, true} {
 			_, err := m.handle(ctx, view{user: settings.User{ID: stranger}, private: private}, r)
@@ -89,6 +99,8 @@ func TestProviderRoutesArePrivateOnly(t *testing.T) {
 		{op: opProviderCreate, word: "openai"},
 		{op: opProviderEdit, id: 1, word: fieldKey},
 		{op: opModelTest, id: 1},
+		{op: opPersonalityEdit, id: group},
+		{op: opStyleEdit, id: group},
 	} {
 		_, err := m.handle(t.Context(), view{user: settings.User{ID: admin}}, r)
 		if !errors.Is(err, errPrivateOnly) {
@@ -128,5 +140,47 @@ func TestOtherUsersProviderIsNotFound(t *testing.T) {
 	}
 	if _, err := m.handle(ctx, view{user: owner, private: true}, route{op: opModel, id: mdl.ID}); err != nil {
 		t.Errorf("the owner cannot open their model: %v", err)
+	}
+}
+
+func TestToggleKeepsModelBindings(t *testing.T) {
+	m, chats := newTestMenu(t)
+	ctx := t.Context()
+	u := settings.User{ID: admin}
+	p, err := m.svc.CreateProvider(ctx, u, settings.ProviderInput{Kind: domain.ProviderOpenRouter, Name: "p", APIKey: "sk-0123456789"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mdl, err := m.svc.CreateModel(ctx, u, p.ID, settings.ModelInput{Name: "x/y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []route{
+		{op: opChatModel, id: group, id2: mdl.ID},
+		{op: opGroupModel, id: group, id2: mdl.ID},
+		{op: opGroupToggle, id: group, word: toggleChat},
+		{op: opLimitUser, id: group},
+	} {
+		if _, err := m.handle(ctx, view{user: u}, r); err != nil {
+			t.Fatalf("%s: %v", r, err)
+		}
+	}
+	c, _ := chats.Chat(ctx, group)
+	if c.ChatModelID == nil || c.SummaryModelID == nil || c.Settings.Chat || c.Settings.Limits.UserPerHour != 50 {
+		t.Fatalf("chat = %+v", c)
+	}
+}
+
+func TestStartRoute(t *testing.T) {
+	for param, want := range map[string]route{
+		"":          {op: opHome},
+		"models":    {op: opProviders},
+		"g_-100123": {op: opGroup, id: -100123},
+		"g_abc":     {op: opHome},
+		"-100123":   {op: opHome},
+	} {
+		if got := startRoute(param); got != want {
+			t.Errorf("startRoute(%q) = %+v, want %+v", param, got, want)
+		}
 	}
 }

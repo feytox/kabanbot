@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/mymmrac/telego"
@@ -83,10 +84,7 @@ func (b *Bot) onPrivateMessage(ctx context.Context, msg *telego.Message) {
 	switch cmd.Name {
 	case "start", "settings":
 		b.touchChat(ctx, msg.Chat.ID, fullName(*msg.From), false)
-		r := route{op: opHome}
-		if _, arg, _ := strings.Cut(msg.Text, " "); strings.TrimSpace(arg) == startParamModels {
-			r = route{op: opProviders}
-		}
+		r := startRoute(commandArgs(msg.Text))
 		b.spawn(ctx, func(ctx context.Context) {
 			b.seen(ctx, u)
 			b.showNew(ctx, msg.Chat.ID, u, r)
@@ -98,6 +96,19 @@ func (b *Bot) onPrivateMessage(ctx context.Context, msg *telego.Message) {
 		}
 		b.spawn(ctx, func(ctx context.Context) { b.sendText(ctx, msg.Chat.ID, text) })
 	}
+}
+
+// startRoute picks the screen a /start parameter asks for: t.me/<bot>?start=models or ?start=g_<chat>.
+func startRoute(param string) route {
+	if param == startParamModels {
+		return route{op: opProviders}
+	}
+	if id, err := strconv.ParseInt(strings.TrimPrefix(param, startParamChatPrefix), 10, 64); err == nil &&
+		strings.HasPrefix(param, startParamChatPrefix) {
+		// Whether the user may open this chat is checked like for any other route.
+		return route{op: opGroup, id: id}
+	}
+	return route{op: opHome}
 }
 
 // handleDialogAnswer feeds a private message to the user's dialog, if there is one.

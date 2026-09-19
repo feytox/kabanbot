@@ -314,6 +314,12 @@ func TestPrivateChatBelongsToItsUser(t *testing.T) {
 	if err := e.svc.SetPersonality(ctx, user(bob), alice, "злой", domain.ViaTool); !errors.Is(err, settings.ErrForbidden) {
 		t.Fatalf("bob changing alice's personality: err = %v", err)
 	}
+	own, _ := e.svc.Chat(ctx, user(alice), alice)
+	in := settings.ChatInput{Settings: own.Settings}
+	in.Settings.Limits = domain.RateLimits{}
+	if v, err := e.svc.UpdateChat(ctx, user(alice), alice, in); err != nil || v.Settings.Limits != domain.DefaultChatSettings().Limits {
+		t.Errorf("alice lifted the limits of her private chat: %+v, %v", v.Settings.Limits, err)
+	}
 	if chats, _ := e.svc.Chats(ctx, user(alice)); len(chats) != 1 || chats[0].ID != group {
 		t.Errorf("the groups list shows private chats: %+v", chats)
 	}

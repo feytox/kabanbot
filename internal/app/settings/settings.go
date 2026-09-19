@@ -518,6 +518,10 @@ func (s *Service) UpdateChat(ctx context.Context, u User, id int64, in ChatInput
 	if err := validateLimits(in.Settings.Limits); err != nil {
 		return ChatView{}, err
 	}
+	if domain.IsPrivateChat(id) {
+		// Limits guard the owner's shared models, so a user cannot lift them in their own chat.
+		in.Settings.Limits = c.Settings.Limits
+	}
 	c.Settings, c.SummaryModelID, c.ChatModelID = in.Settings, in.SummaryModelID, in.ChatModelID
 	if err := s.chats.UpdateChat(ctx, c, u.ID); err != nil {
 		return ChatView{}, err

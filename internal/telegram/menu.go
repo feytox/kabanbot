@@ -1,12 +1,10 @@
 package telegram
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"html"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -74,10 +72,13 @@ func showWith(toast string) func(screen, error) (outcome, error) {
 	}
 }
 
-// groupRoute reports whether the route may be used inside a group.
+// groupRoute reports whether the route may be used inside a group. Such routes all take
+// the chat ID as their first ID. Text input for a chat happens in the private chat.
 func groupRoute(op string) bool {
 	switch op {
-	case opNoop, opClose, opGroup, opGroupToggle, opGroupModels, opGroupModel:
+	case opNoop, opClose, opGroup, opGroupToggle, opGroupModels, opGroupModel, opChatModels, opChatModel,
+		opPersonality, opPersonalityReset, opPersonalityHistory, opPersonalityRevert, opStyleReset,
+		opLimits, opLimitUser, opLimitChat, opStats:
 		return true
 	}
 	return false
@@ -92,18 +93,9 @@ func (m *menu) handle(ctx context.Context, v view, r route) (outcome, error) {
 	case opNoop, opClose:
 		return outcome{}, nil
 	case opHome:
-		return show(m.home(), nil)
+		return show(m.home(v), nil)
 	case opGroups:
 		return show(m.groups(ctx, v))
-
-	case opGroup:
-		return show(m.group(ctx, v, r.id))
-	case opGroupToggle:
-		return showWith("Сохранено")(m.toggle(ctx, v, r.id, r.word))
-	case opGroupModels:
-		return show(m.groupModels(ctx, v, r.id))
-	case opGroupModel:
-		return showWith("Модель выбрана")(m.setGroupModel(ctx, v, r.id, r.id2))
 
 	case opProviders:
 		return show(m.providers(ctx, v))
@@ -145,16 +137,20 @@ func (m *menu) handle(ctx context.Context, v view, r route) (outcome, error) {
 	case opModelDelete:
 		return show(m.confirmDeleteModel(ctx, v, r.id))
 	case opModelDrop:
-		_, p, err := m.findModel(ctx, v.user, r.id)
-		if err != nil {
-			return outcome{}, err
-		}
-		if err := m.svc.DeleteModel(ctx, v.user, r.id); err != nil {
-			return outcome{}, err
-		}
-		return showWith("Модель удалена")(m.provider(ctx, v, p.ID))
+		return m.dropModel(ctx, v, r.id)
 	}
-	return outcome{}, errBadRoute
+	return m.handleChatRoute(ctx, v, r)
+}
+
+func (m *menu) dropModel(ctx context.Context, v view, id int64) (outcome, error) {
+	_, p, err := m.findModel(ctx, v.user, id)
+	if err != nil {
+		return outcome{}, err
+	}
+	if err := m.svc.DeleteModel(ctx, v.user, id); err != nil {
+		return outcome{}, err
+	}
+	return showWith("Модель удалена")(m.provider(ctx, v, p.ID))
 }
 
 // userError returns a message about err that is safe to show, and whether err was expected.
@@ -203,13 +199,15 @@ func check(on bool) string {
 
 // Main menu.
 
-func (m *menu) home() screen {
+func (m *menu) home(v view) screen {
 	return screen{
 		text: "<b>Кабанбот</b>\n\n" +
 			"Я делаю пересказы переписки в группах: ответьте командой /summary на сообщение, с которого начать.\n\n" +
+			"Со мной можно поговорить: упомяните меня в группе, ответьте на моё сообщение или напишите сюда.\n\n" +
 			"Здесь можно подключить свои модели и настроить группы, где вы администратор.",
 		rows: [][]telego.InlineKeyboardButton{
 			row(button("Группы", route{op: opGroups}), button("Мои модели", route{op: opProviders})),
+			row(button("Мой чат с ботом", route{op: opGroup, id: v.user.ID})),
 		},
 	}
 }
@@ -230,141 +228,6 @@ func (m *menu) groups(ctx context.Context, v view) (screen, error) {
 	}
 	s.rows = append(s.rows, back("Назад", route{op: opHome}))
 	return s, nil
-}
-
-// Group settings.
-
-func (m *menu) group(ctx context.Context, v view, chatID int64) (screen, error) {
-	c, err := m.svc.Chat(ctx, v.user, chatID)
-	if err != nil {
-		return screen{}, err
-	}
-	return m.groupScreen(v, c), nil
-}
-
-func (m *menu) groupScreen(v view, c settings.ChatView) screen {
-	st := c.Settings
-	text := "<b>Настройки «" + html.EscapeString(c.Title) + "»</b>\n\n" +
-		"Модель для пересказов: " + html.EscapeString(summaryModelName(c))
-	if c.SummaryModel == nil {
-		text += "\n\nПока модель не выбрана, /summary не работает."
-	}
-	if !st.Enabled {
-		text += "\n\nБот выключен в этом чате: он не делает пересказы и не отзывается на @all."
-	}
-
-	toggle := func(label string, on bool, word string) telego.InlineKeyboardButton {
-		label = check(on) + " " + label
-		if !st.Enabled {
-			return disabled(label)
-		}
-		return button(label, route{op: opGroupToggle, id: c.ID, word: word})
-	}
-	power := styled(button("Включить бота", route{op: opGroupToggle, id: c.ID, word: toggleEnabled}), telego.ButtonStyleSuccess)
-	if st.Enabled {
-		power = button("Выключить бота", route{op: opGroupToggle, id: c.ID, word: toggleEnabled})
-	}
-	rows := [][]telego.InlineKeyboardButton{
-		row(power),
-		row(toggle("Пересказы /summary", st.Summary, toggleSummary)),
-		row(toggle("Упоминание @all", st.MentionAll, toggleMention)),
-		row(button("Модель: "+summaryModelName(c)+" ›", route{op: opGroupModels, id: c.ID})),
-	}
-	if v.private {
-		rows = append(rows, back("Группы", route{op: opGroups}))
-	} else {
-		rows = append(rows,
-			row(telego.InlineKeyboardButton{Text: "Мои модели → в личку", URL: "https://t.me/" + m.botUsername + "?start=models"}),
-			row(button("Закрыть", route{op: opClose})),
-		)
-	}
-	return screen{text: text, rows: rows}
-}
-
-func summaryModelName(c settings.ChatView) string {
-	if c.SummaryModel == nil {
-		return "не выбрана"
-	}
-	return c.SummaryModel.DisplayName
-}
-
-func (m *menu) toggle(ctx context.Context, v view, chatID int64, word string) (screen, error) {
-	c, err := m.svc.Chat(ctx, v.user, chatID)
-	if err != nil {
-		return screen{}, err
-	}
-	st := c.Settings
-	switch word {
-	case toggleEnabled:
-		st.Enabled = !st.Enabled
-	case toggleSummary:
-		st.Summary = !st.Summary
-	case toggleMention:
-		st.MentionAll = !st.MentionAll
-	}
-	c, err = m.svc.UpdateChat(ctx, v.user, chatID, settings.ChatInput{Settings: st, SummaryModelID: c.SummaryModelID})
-	if err != nil {
-		return screen{}, err
-	}
-	return m.groupScreen(v, c), nil
-}
-
-func (m *menu) groupModels(ctx context.Context, v view, chatID int64) (screen, error) {
-	c, err := m.svc.Chat(ctx, v.user, chatID)
-	if err != nil {
-		return screen{}, err
-	}
-	usable, err := m.svc.UsableModels(ctx, v.user)
-	if err != nil {
-		return screen{}, err
-	}
-
-	text := "<b>Модель для пересказов в «" + html.EscapeString(c.Title) + "»</b>\n\n"
-	current := c.SummaryModel
-	if current != nil && !slices.ContainsFunc(usable, func(o domain.ModelOption) bool { return o.ID == current.ID }) {
-		text += "Сейчас выбрана «" + html.EscapeString(current.DisplayName) + "» — личная модель " +
-			html.EscapeString(cmp.Or(current.OwnerName, "другого администратора")) + ". Если выбрать другую, вернуть её сможет только владелец.\n\n"
-	}
-	text += "Здесь ваши модели и общие модели владельца бота. Свои можно подключить в личке с ботом, в разделе «Мои модели»."
-
-	mark := func(on bool, label string) string {
-		if on {
-			return "✓ " + label
-		}
-		return label
-	}
-	rows := [][]telego.InlineKeyboardButton{
-		row(button(mark(current == nil, "Не выбрана"), route{op: opGroupModel, id: chatID})),
-	}
-	for _, o := range capped(usable) {
-		label := mark(current != nil && current.ID == o.ID, optionLabel(o, v.user))
-		rows = append(rows, row(button(label, route{op: opGroupModel, id: chatID, id2: o.ID})))
-	}
-	rows = append(rows, back("Назад", route{op: opGroup, id: chatID}))
-	return screen{text: text, rows: rows}, nil
-}
-
-func optionLabel(o domain.ModelOption, viewer settings.User) string {
-	if o.OwnerID == viewer.ID {
-		return o.DisplayName + " · " + o.ProviderName
-	}
-	return o.DisplayName + " · общая, от " + cmp.Or(o.OwnerName, "владельца бота")
-}
-
-func (m *menu) setGroupModel(ctx context.Context, v view, chatID, modelID int64) (screen, error) {
-	c, err := m.svc.Chat(ctx, v.user, chatID)
-	if err != nil {
-		return screen{}, err
-	}
-	var id *int64
-	if modelID != 0 {
-		id = &modelID
-	}
-	c, err = m.svc.UpdateChat(ctx, v.user, chatID, settings.ChatInput{Settings: c.Settings, SummaryModelID: id})
-	if err != nil {
-		return screen{}, err
-	}
-	return m.groupScreen(v, c), nil
 }
 
 // Providers.
@@ -922,7 +785,9 @@ func (m *menu) bindModelTo(ctx context.Context, v view, id, chatID int64) (outco
 	if err != nil {
 		return outcome{}, err
 	}
-	if _, err := m.svc.UpdateChat(ctx, v.user, chatID, settings.ChatInput{Settings: c.Settings, SummaryModelID: &id}); err != nil {
+	in := chatInput(c)
+	in.SummaryModelID = &id
+	if _, err := m.svc.UpdateChat(ctx, v.user, chatID, in); err != nil {
 		return outcome{}, err
 	}
 	return showWith("Модель подключена к «" + c.Title + "»")(m.model(ctx, v, id, ""))

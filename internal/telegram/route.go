@@ -25,6 +25,20 @@ const (
 	opGroupModels = "gp" // gp:<chat> summary model picker
 	opGroupModel  = "gm" // gm:<chat>:<model>; model 0 unbinds the model
 
+	opChatModels         = "gcp" // gcp:<chat> chat model picker
+	opChatModel          = "gcm" // gcm:<chat>:<model>; model 0 falls back to the summary model
+	opPersonality        = "pp"  // pp:<chat>
+	opPersonalityEdit    = "ppe" // ppe:<chat> start the personality dialog
+	opPersonalityReset   = "ppr" // ppr:<chat>
+	opPersonalityHistory = "pph" // pph:<chat>
+	opPersonalityRevert  = "ppv" // ppv:<chat>:<change>
+	opStyleEdit          = "pse" // pse:<chat> start the summary style dialog
+	opStyleReset         = "psr" // psr:<chat>
+	opLimits             = "lim" // lim:<chat>
+	opLimitUser          = "lu"  // lu:<chat> cycle the per-user limit
+	opLimitChat          = "lc"  // lc:<chat> cycle the per-chat limit
+	opStats              = "st"  // st:<chat>
+
 	opProviders      = "pl"  // the user's providers
 	opProviderNew    = "pn"  // choose the kind of a new provider
 	opProviderCreate = "pk"  // pk:<kind> start the new provider dialog
@@ -50,6 +64,7 @@ const (
 	toggleEnabled = "on"
 	toggleSummary = "sum"
 	toggleMention = "all"
+	toggleChat    = "talk"
 
 	fieldName        = "name"
 	fieldURL         = "url"
@@ -72,9 +87,23 @@ var routeSpecs = map[string]routeSpec{
 	opGroups: {},
 
 	opGroup:       {ids: 1},
-	opGroupToggle: {ids: 1, words: []string{toggleEnabled, toggleSummary, toggleMention}},
+	opGroupToggle: {ids: 1, words: []string{toggleEnabled, toggleSummary, toggleMention, toggleChat}},
 	opGroupModels: {ids: 1},
 	opGroupModel:  {ids: 2},
+
+	opChatModels:         {ids: 1},
+	opChatModel:          {ids: 2},
+	opPersonality:        {ids: 1},
+	opPersonalityEdit:    {ids: 1},
+	opPersonalityReset:   {ids: 1},
+	opPersonalityHistory: {ids: 1},
+	opPersonalityRevert:  {ids: 2},
+	opStyleEdit:          {ids: 1},
+	opStyleReset:         {ids: 1},
+	opLimits:             {ids: 1},
+	opLimitUser:          {ids: 1},
+	opLimitChat:          {ids: 1},
+	opStats:              {ids: 1},
 
 	opProviders:   {},
 	opProviderNew: {},
